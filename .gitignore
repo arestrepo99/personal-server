@@ -5,6 +5,10 @@ terraform/*.tfstate.*
 terraform/crash.log
 terraform/crash.*.log
 terraform/*.tfvars.json
+# Plan files can contain sensitive resource values in plaintext (e.g. the
+# SSH private key in kubernetes_secret.gitops_repo_creds) -- never commit.
+terraform/tfplan
+terraform/*.tfplan
 # terraform.tfvars is NOT secret (just a repo URL) -- intentionally tracked.
 # .tf files are tracked directly (no .tf.txt source-of-truth split).
 
