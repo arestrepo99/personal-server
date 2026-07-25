@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: netbird-server
+  namespace: netbird
+spec:
+  selector:
+    app: netbird-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+# STUN needs its own Service of type LoadBalancer so k3s's built-in
+# servicelb (klipper-lb) binds UDP/3478 directly on the host's public IP --
+# a ClusterIP Service can't be reached from the internet for a UDP protocol
+# that isn't going through the Ingress/Traefik.
+apiVersion: v1
+kind: Service
+metadata:
+  name: netbird-stun
+  namespace: netbird
+spec:
+  type: LoadBalancer
+  selector:
+    app: netbird-server
+  ports:
+    - name: stun
+      port: 3478
+      targetPort: stun
+      protocol: UDP

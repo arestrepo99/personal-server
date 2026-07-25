@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: netbird
+  namespace: argocd
+  annotations:
+    # Wave 2: needs cert-manager + the ClusterIssuer (wave 0/1) ready for its
+    # Ingress to get a cert, and the sealed-secrets controller (wave 0) ready
+    # to unseal its config Secret.
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:arestrepo99/personal-server.git # same value as terraform/terraform.tfvars gitops_repo_url
+    targetRevision: main
+    path: gitops/netbird
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: netbird
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

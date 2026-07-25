@@ -1,0 +1,69 @@
+# NetBird "combined container" -- management + signal + relay + STUN in one
+# process. Image confirmed to exist at netbirdio/netbird-server on Docker Hub
+# (2026 architecture). Pin to a specific tag once you've confirmed the exact
+# current version tag -- `latest` is used here as a starting point since tag
+# lookups kept getting blocked mid-session; check
+# https://hub.docker.com/r/netbirdio/netbird-server/tags before going to
+# production and pin it explicitly.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netbird-server
+  namespace: netbird
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # sqlite store on a single ReadWriteOnce volume -- never run 2 pods at once
+  selector:
+    matchLabels:
+      app: netbird-server
+  template:
+    metadata:
+      labels:
+        app: netbird-server
+    spec:
+      containers:
+        - name: netbird-server
+          image: netbirdio/netbird-server:latest
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: stun
+              containerPort: 3478
+              protocol: UDP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+            - name: healthcheck
+              containerPort: 9000
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/netbird/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/netbird
+          args:
+            - --config
+            - /etc/netbird/config.yaml
+          readinessProbe:
+            httpGet:
+              path: /
+              port: healthcheck
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: healthcheck
+            initialDelaySeconds: 20
+            periodSeconds: 20
+      volumes:
+        - name: config
+          secret:
+            secretName: netbird-config # produced by sealing config.yaml.template -- see README.md
+        - name: data
+          persistentVolumeClaim:
+            claimName: netbird-data

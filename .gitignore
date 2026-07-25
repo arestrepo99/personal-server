@@ -1,0 +1,20 @@
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/crash.log
+terraform/crash.*.log
+terraform/*.tfvars.json
+# terraform.tfvars is NOT secret (just a repo URL) -- intentionally tracked.
+# .tf files are tracked directly (no .tf.txt source-of-truth split).
+
+# Claude Code local tool state -- not part of the infra repo
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Never commit raw secrets. SealedSecrets (encrypted) are fine and expected
+# in gitops/ -- this rule is a backstop against accidentally adding a
+# plain Secret manifest or a .env file with real credentials.
+*.env
+**/secrets/*.yaml
+!**/secrets/*.sealed.yaml

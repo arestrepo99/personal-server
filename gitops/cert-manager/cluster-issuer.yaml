@@ -1,0 +1,17 @@
+# Let's Encrypt PROD issuer (user's decision -- see task.md open questions).
+# HTTP-01 challenge via the Traefik Ingress controller that ships built into
+# k3s by default -- no extra ingress controller install needed.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: arestrepo1999@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik

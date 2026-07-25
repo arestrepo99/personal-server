@@ -1,0 +1,51 @@
+# NetBird dashboard (frontend SPA). Separate container from the combined
+# server -- confirmed to still exist as its own image (netbirdio/dashboard)
+# even in the 2026 combined-container architecture; the CSP/OIDC bug found
+# during research (netbirdio/dashboard#690) lives in this component.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netbird-dashboard
+  namespace: netbird
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: netbird-dashboard
+  template:
+    metadata:
+      labels:
+        app: netbird-dashboard
+    spec:
+      containers:
+        - name: dashboard
+          image: netbirdio/dashboard:latest
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: NETBIRD_MGMT_API_ENDPOINT
+              value: "https://netbird.arec.me"
+            - name: NETBIRD_MGMT_GRPC_API_ENDPOINT
+              value: "https://netbird.arec.me"
+            - name: AUTH_AUTHORITY
+              value: "https://netbird.arec.me/oauth2"
+            - name: AUTH_SUPPORTED_SCOPES
+              value: "openid profile email"
+            - name: USE_AUTH0
+              value: "false"
+            # Known open bug workaround (netbirdio/dashboard#690): CSP
+            # connect-src omits Google's token/JWKS hosts, breaking the
+            # browser-side PKCE exchange once Google is added as an IdP.
+            - name: NETBIRD_CSP
+              value: "https://oauth2.googleapis.com https://www.googleapis.com https://openidconnect.googleapis.com"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15

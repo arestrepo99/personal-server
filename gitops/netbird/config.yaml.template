@@ -1,0 +1,63 @@
+# Template for the NetBird "combined container" config.yaml -- schema
+# confirmed against https://github.com/netbirdio/netbird/blob/main/combined/config.yaml.example
+# (fetched 2026-07-25). This file has NO real secrets in it -- it's safe to
+# commit as-is. The <PLACEHOLDER_...> values below get filled in with real
+# generated secrets and sealed via kubeseal into secret-config.sealed.yaml
+# (see README.md in this directory) -- that sealed file is what actually
+# ships to the cluster, not this template.
+#
+# Auth model: NetBird's embedded auth (Dex-based) is always on -- this
+# config.yaml just points auth.issuer at NetBird's own public URL. Google
+# OIDC itself is wired up AFTER first deploy, through the dashboard
+# (Settings -> Identity Providers -> Add Identity Provider), which then
+# displays the exact redirect URI to register in Google Cloud Console. Do
+# NOT try to hardcode Google client_id/secret into this file -- that's not
+# how the current (2026) embedded-IdP architecture takes them.
+server:
+  listenAddress: ":8080" # plain HTTP -- TLS is terminated at the Ingress (Traefik), not here
+  exposedAddress: "https://netbird.arec.me:443"
+
+  stunPorts:
+    - 3478
+
+  metricsPort: 9090
+  healthcheckAddress: ":9000"
+
+  logLevel: "info"
+  logFile: "console"
+
+  tls:
+    certFile: ""
+    keyFile: ""
+    letsencrypt:
+      enabled: false
+
+  # Shared secret peers/relay use to authenticate to each other. Generate with:
+  #   openssl rand -hex 32
+  authSecret: "<PLACEHOLDER_AUTH_SECRET>"
+
+  dataDir: "/var/lib/netbird/"
+
+  disableAnonymousMetrics: false
+  disableGeoliteUpdate: false
+
+  auth:
+    issuer: "https://netbird.arec.me/oauth2"
+    localAuthDisabled: false
+    dashboardRedirectURIs:
+      - "https://netbird.arec.me/nb-auth"
+      - "https://netbird.arec.me/nb-silent-auth"
+    cliRedirectURIs:
+      - "http://localhost:53000/"
+    # Initial admin account so there's a non-interactive way to log in and
+    # configure Google as an IdP before Google OIDC is wired up. Disable
+    # localAuthDisabled (set true) once Google login is confirmed working,
+    # if you want Google-only login going forward.
+    owner:
+      email: "arestrepo1999@gmail.com"
+      password: "<PLACEHOLDER_OWNER_PASSWORD>"
+
+  store:
+    engine: "sqlite"
+    # Generate with: openssl rand -hex 32
+    encryptionKey: "<PLACEHOLDER_STORE_ENCRYPTION_KEY>"

@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager-issuer
+  namespace: argocd
+  annotations:
+    # Wave 1: needs the cert-manager CRDs + webhook (wave 0) to be Healthy
+    # before the ClusterIssuer resource can be admitted.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:arestrepo99/personal-server.git # same value as terraform/terraform.tfvars gitops_repo_url
+    targetRevision: main
+    path: gitops/cert-manager
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
