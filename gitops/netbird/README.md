@@ -19,10 +19,16 @@ this cluster can decrypt it.
    sudo install -m 755 kubeseal /usr/local/bin/kubeseal
    ```
 
-2. Generate the three real secret values:
+2. Generate the three real secret values. `store.encryptionKey` specifically
+   must be **base64-encoded 32 raw bytes** -- NetBird base64-decodes this
+   field and checks the decoded length. `openssl rand -hex 32` produces a
+   64-char hex string, which happens to also be valid base64 and decodes to
+   48 bytes, not 32 -- causes a `FATL ... failed to create field encryptor:
+   encryption key must be 32 bytes, got 48` crash loop. Use `-base64`, not
+   `-hex`, for this one:
    ```bash
    AUTH_SECRET=$(openssl rand -hex 32)
-   STORE_ENCRYPTION_KEY=$(openssl rand -hex 32)
+   STORE_ENCRYPTION_KEY=$(openssl rand -base64 32)
    OWNER_PASSWORD=$(openssl rand -base64 24)
    echo "Save this owner password somewhere safe: $OWNER_PASSWORD"
    ```
