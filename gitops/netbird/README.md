@@ -19,25 +19,36 @@ this cluster can decrypt it.
    sudo install -m 755 kubeseal /usr/local/bin/kubeseal
    ```
 
-2. Generate the three real secret values. `store.encryptionKey` specifically
-   must be **base64-encoded 32 raw bytes** -- NetBird base64-decodes this
-   field and checks the decoded length. `openssl rand -hex 32` produces a
-   64-char hex string, which happens to also be valid base64 and decodes to
-   48 bytes, not 32 -- causes a `FATL ... failed to create field encryptor:
-   encryption key must be 32 bytes, got 48` crash loop. Use `-base64`, not
-   `-hex`, for this one:
+2. Generate the three real secret values. Two gotchas confirmed the hard way
+   (via actual pod logs), not from docs:
+   - `store.encryptionKey` must be **base64-encoded 32 raw bytes** -- NetBird
+     base64-decodes this field and checks the decoded length. `openssl rand
+     -hex 32` produces a 64-char hex string, which happens to also be valid
+     base64 and decodes to 48 bytes, not 32 -- causes a `FATL ... failed to
+     create field encryptor: encryption key must be 32 bytes, got 48` crash
+     loop. Use `-base64`, not `-hex`, for this one.
+   - `auth.owner.password` must be a **bcrypt hash of the password**, not
+     the plaintext password itself -- the embedded Dex IdP parses whatever's
+     in that field directly as a bcrypt hash. Putting the plaintext password
+     there fails at login time with `parsing bcrypt hash: crypto/bcrypt:
+     hashedSecret too short to be a bcrypted password` (pod stays up, only
+     login itself fails). Requires `pip3 install bcrypt` if not already
+     present.
    ```bash
    AUTH_SECRET=$(openssl rand -hex 32)
    STORE_ENCRYPTION_KEY=$(openssl rand -base64 32)
    OWNER_PASSWORD=$(openssl rand -base64 24)
-   echo "Save this owner password somewhere safe: $OWNER_PASSWORD"
+   OWNER_PASSWORD_HASH=$(python3 -c "import bcrypt,sys; print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt()).decode())" "$OWNER_PASSWORD")
+   echo "Save this owner password somewhere safe (this is what you type in, not the hash): $OWNER_PASSWORD"
    ```
+   Use `$OWNER_PASSWORD_HASH` (not `$OWNER_PASSWORD`) when rendering the
+   template in the next step.
 
 3. Render the real `config.yaml` from the template:
    ```bash
    sed -e "s/<PLACEHOLDER_AUTH_SECRET>/$AUTH_SECRET/" \
        -e "s/<PLACEHOLDER_STORE_ENCRYPTION_KEY>/$STORE_ENCRYPTION_KEY/" \
-       -e "s/<PLACEHOLDER_OWNER_PASSWORD>/$OWNER_PASSWORD/" \
+       -e "s|<PLACEHOLDER_OWNER_PASSWORD>|$OWNER_PASSWORD_HASH|" \
        config.yaml.template > /tmp/config.yaml
    ```
 
