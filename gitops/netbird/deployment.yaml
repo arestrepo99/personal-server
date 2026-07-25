@@ -50,13 +50,13 @@ spec:
             - /etc/netbird/config.yaml
           readinessProbe:
             httpGet:
-              path: /
+              path: /health
               port: healthcheck
             initialDelaySeconds: 10
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /
+              path: /health
               port: healthcheck
             initialDelaySeconds: 20
             periodSeconds: 20
