@@ -12,6 +12,28 @@ spec:
       targetPort: http
       protocol: TCP
 ---
+# Same pod, same port -- but a raw gRPC client (e.g. the mobile app's
+# GetServerKey call) needs Traefik to speak HTTP/2 cleartext (h2c) to the
+# backend, not HTTP/1.1. Flipping the *main* netbird-server Service to h2c
+# would risk breaking the /relay WebSocket upgrade and the plain-HTTP
+# /oauth2 and /api paths (WebSocket-over-HTTP/2 needs Extended CONNECT
+# support most proxies don't have). So: a second Service, appProtocol h2c,
+# used only for the actual gRPC paths in ingress.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: netbird-server-grpc
+  namespace: netbird
+spec:
+  selector:
+    app: netbird-server
+  ports:
+    - name: grpc
+      port: 8080
+      targetPort: http
+      protocol: TCP
+      appProtocol: h2c
+---
 # STUN needs its own Service of type LoadBalancer so k3s's built-in
 # servicelb (klipper-lb) binds UDP/3478 directly on the host's public IP --
 # a ClusterIP Service can't be reached from the internet for a UDP protocol

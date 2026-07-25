@@ -28,20 +28,28 @@ spec:
                 name: netbird-server
                 port:
                   name: http
+          # These two are raw gRPC (not gRPC-Web/REST) -- e.g. the mobile
+          # app's GetServerKey call. Routed at the h2c-flagged Service
+          # (service.yaml) so Traefik speaks HTTP/2 cleartext to the
+          # backend; the plain "http" Service/paths above default to
+          # HTTP/1.1 and gRPC fails against them with a bare 404 (confirmed:
+          # mobile client got "unexpected HTTP status code ... 404" with
+          # content-type text/plain -- Traefik's own not-found page, meaning
+          # no proper HTTP/2 response ever came back from the backend).
           - path: /management.ManagementService
             pathType: Prefix
             backend:
               service:
-                name: netbird-server
+                name: netbird-server-grpc
                 port:
-                  name: http
+                  name: grpc
           - path: /signalexchange.SignalExchange
             pathType: Prefix
             backend:
               service:
-                name: netbird-server
+                name: netbird-server-grpc
                 port:
-                  name: http
+                  name: grpc
           - path: /oauth2
             pathType: Prefix
             backend:
