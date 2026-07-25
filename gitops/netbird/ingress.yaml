@@ -56,6 +56,19 @@ spec:
                 name: netbird-server
                 port:
                   name: http
+          # Relay WebSocket handler -- confirmed from netbird-server startup
+          # logs ("Relay WebSocket handler added (path: /relay)"). Missing
+          # this route was the actual cause of the pod's own healthcheck
+          # self-test failing ("expected handshake response status code 101
+          # but got 404") -- it was falling through to the dashboard's 404
+          # page instead of hitting the relay handler.
+          - path: /relay
+            pathType: Prefix
+            backend:
+              service:
+                name: netbird-server
+                port:
+                  name: http
           - path: /
             pathType: Prefix
             backend:
