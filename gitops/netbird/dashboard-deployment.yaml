@@ -30,6 +30,23 @@ spec:
               value: "https://netbird.arec.me"
             - name: AUTH_AUTHORITY
               value: "https://netbird.arec.me/oauth2"
+            # Ground-truthed from netbirdio/netbird's embedded.go:
+            # StaticClientDashboard = "netbird-dashboard", a hardcoded public
+            # (no secret) OAuth2 client the embedded Dex IdP always
+            # registers. AUTH_CLIENT_ID and AUTH_AUDIENCE were missing
+            # entirely before -- the dashboard's init_react_envs.sh treats
+            # both as required and exits before running envsubst if either
+            # is unset, which is why the built HTML/JS was serving literal
+            # unsubstituted "$$NETBIRD_MGMT_API_ENDPOINT" placeholders and
+            # login failed with "Unauthenticated".
+            - name: AUTH_CLIENT_ID
+              value: "netbird-dashboard"
+            - name: AUTH_AUDIENCE
+              value: "netbird-dashboard"
+            - name: AUTH_REDIRECT_URI
+              value: "/nb-auth"
+            - name: AUTH_SILENT_REDIRECT_URI
+              value: "/nb-silent-auth"
             - name: AUTH_SUPPORTED_SCOPES
               value: "openid profile email"
             - name: USE_AUTH0
