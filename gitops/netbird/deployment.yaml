@@ -48,16 +48,22 @@ spec:
           args:
             - --config
             - /etc/netbird/config.yaml
+          # NOT httpGet /health on purpose: that endpoint's health check
+          # includes verifying the relay is reachable via its own public
+          # Ingress URL -- but Kubernetes only routes Ingress traffic to
+          # pods it already considers Ready, so gating readiness on that
+          # endpoint is a deadlock (pod can never become Ready because the
+          # thing it's checking requires it to already be Ready). Use a
+          # plain TCP check on the main port instead -- decoupled from that
+          # external self-test, just confirms the process is listening.
           readinessProbe:
-            httpGet:
-              path: /health
-              port: healthcheck
+            tcpSocket:
+              port: http
             initialDelaySeconds: 10
             periodSeconds: 10
           livenessProbe:
-            httpGet:
-              path: /health
-              port: healthcheck
+            tcpSocket:
+              port: http
             initialDelaySeconds: 20
             periodSeconds: 20
       volumes:
