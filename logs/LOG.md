@@ -320,3 +320,116 @@ provider form. Full detail in `gitops/netbird/README.md`.
 Next: `git add`/commit everything, push to the new GitHub remote, then
 `terraform apply` again with `create_root_app = true` so the root
 Application starts syncing.
+
+## 2026-07-25 — Root Application live; debugging NetBird to Healthy
+
+`terraform apply` run (user did the first Phase 1 apply themselves earlier;
+this session ran the follow-up with `create_root_app = true` plus the new
+`argocd-repo-credentials.tf`). All 5 ArgoCD Applications now `Synced`/
+`Healthy`: `root-app`, `sealed-secrets`, `cert-manager`, `cert-manager-issuer`,
+`netbird`.
+
+Getting `netbird` from `Degraded`/crash-looping to `Healthy` took four real
+bugs found via pod logs, not guesswork:
+
+1. **`store.encryptionKey` wrong format** -- `FATL ... encryption key must
+   be 32 bytes, got 48`. README told the user to generate it with
+   `openssl rand -hex 32` (64 hex chars). Hex characters are also valid
+   base64 characters, so NetBird's base64-decode of that string yields 48
+   bytes, not the 32 it needs. Fixed generation command to
+   `openssl rand -base64 32` (base64-encoded 32 raw bytes, decodes back to
+   exactly 32). Re-sealed `secret-config.sealed.yaml`, new owner password:
+   `HdUTCWyrXg/TfC52++RTKC3HRERJF79q` (arestrepo1999@gmail.com) -- the
+   original password given earlier in this session is invalid, this is the
+   current one.
+2. **Wrong healthcheck path in `deployment.yaml`** -- probes pointed at `/`,
+   but the container's own healthcheck server logs
+   `starting healthcheck server on: http://localhost:9000/health`. Fixed to
+   `/health` (still not the final fix -- see #4).
+3. **Missing `/relay` Ingress route** -- pod logs showed
+   `Relay WebSocket handler added (path: /relay)`, but `ingress.yaml`'s path
+   list never included `/relay`, so requests to it fell through to the
+   dashboard's catch-all `/` rule and got a 404 dashboard page instead of a
+   101 WebSocket upgrade. Added the missing route.
+4. **Real architectural deadlock, not a config bug**: NetBird's `/health`
+   endpoint's check includes dialing the relay via its own public URL
+   (`rels://netbird.arec.me:443`) over WebSocket. But Kubernetes only ever
+   routes Ingress traffic to pods it already considers Ready -- so gating
+   the readiness/liveness probe on `/health` created a real circular
+   dependency (pod can't become Ready because its own health check requires
+   the Ingress to already be routing to it, which requires it to be Ready).
+   No path fix could resolve this. Switched `readinessProbe`/`livenessProbe`
+   in `deployment.yaml` from `httpGet /health` to a plain `tcpSocket` check
+   on the main port -- decoupled from the external relay self-test,
+   confirms only that the process is listening.
+
+Also fixed along the way: host `iptables` now has explicit ACCEPT rules for
+TCP 80, TCP 443, TCP 2022 (pre-existing, reordered), UDP 3478, inserted
+before the pre-existing default-REJECT rule -- confirmed OpenVPN(1194)/
+SSH(22,2022)/related-established rules untouched. Confirmed the OCI-level
+Security List already permits 80/443 externally (user confirmed
+`curl https://netbird.arec.me` worked from outside as soon as the host
+firewall rule was added -- so OCI's cloud firewall must already allow it,
+separately from the host-level `iptables`).
+
+Verification: `https://netbird.arec.me/` (dashboard) -> `200`. All ArgoCD
+apps `Synced`/`Healthy`.
+
+**Still open / not yet done:**
+- **UDP 3478 (STUN) end-to-end reachability** -- user is forwarding it at
+  the OCI side; haven't yet confirmed the `netbird-stun` LoadBalancer
+  Service's `servicelb` pod is actually bound and passing traffic through to
+  the pod. Needs a real check (e.g. `stunclient` or similar) once OCI-side
+  forwarding is confirmed done.
+- **OCI Crossplane operator for Security List management** -- user opted
+  into this (Instance Principal auth, no static API keys, dedicated
+  Security List rather than touching the existing Default Security List to
+  avoid clobbering existing OpenVPN/SSH rules). Blocked on the user
+  supplying the VCN OCID and Subnet OCID from the OCI Console -- not
+  provided yet. Nothing built yet beyond the design discussion.
+- **Google OAuth**: not yet started -- user needs to log into the NetBird
+  dashboard with the owner account above, add Google as an Identity
+  Provider under Settings, then follow `gitops/netbird/README.md`'s
+  instructions for the Google Cloud Console side.
+- **`netbirdio/netbird-server:latest` image tag** -- still not pinned to a
+  specific version; flagged since the first manifest was written, still
+  outstanding.
+
+## 2026-07-25 — Dashboard login bug: "Unauthenticated" -- fifth real bug found
+
+After the above fixes, user could load `https://netbird.arec.me/` but got
+"Oops, something went wrong / Error: Unauthenticated" on login. Root-caused
+by execing into the running `netbird-dashboard` pod rather than guessing
+from docs:
+
+- Pod logs showed a literal, unsubstituted request:
+  `GET /$NETBIRD_MGMT_API_ENDPOINT/api/instance` -- the placeholder token
+  itself was being requested, not its value.
+- Read the container's actual init script
+  (`/usr/local/init_react_envs.sh`, found via `find` since no docs fetch was
+  available): it treats `AUTH_CLIENT_ID` and `AUTH_AUDIENCE` as **required**
+  and `exit 1`s before running `envsubst` on the built static files if
+  either is missing. `dashboard-deployment.yaml` never set either --
+  supervisord had already started nginx separately (priority 100) before
+  this init step (priority 201) runs, so the pod stayed `1/1 Running`/Ready
+  the whole time even though env injection silently failed, serving stale
+  template files with literal `$$VAR` placeholders baked in.
+- Fetched `management/server/idp/embedded.go` from the `netbirdio/netbird`
+  source directly (`curl raw.githubusercontent.com`) to find the actual
+  expected client ID rather than guessing: the embedded Dex IdP always
+  registers a hardcoded static client
+  `StaticClientDashboard = "netbird-dashboard"`, `Public: true` (no client
+  secret -- standard PKCE public client).
+- Added to `dashboard-deployment.yaml`: `AUTH_CLIENT_ID=netbird-dashboard`,
+  `AUTH_AUDIENCE=netbird-dashboard`, `AUTH_REDIRECT_URI=/nb-auth`,
+  `AUTH_SILENT_REDIRECT_URI=/nb-silent-auth` (matching
+  `config.yaml`'s `dashboardRedirectURIs`).
+- After redeploy: init script completed fully (CSP built, nginx reloaded,
+  no "must be set" errors) -- previously it never got that far.
+
+General lesson from this whole debugging arc: every real bug found this
+session (encryption key format, healthcheck path, missing Ingress route,
+readiness deadlock, missing dashboard env vars) was found by reading actual
+pod logs / container files directly, not by re-deriving from docs. When
+something doesn't work, `kubectl logs` / `kubectl exec` into the running
+container is the fastest and most reliable path to ground truth here.
