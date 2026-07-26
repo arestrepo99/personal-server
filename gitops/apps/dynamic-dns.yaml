@@ -1,24 +1,23 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: netbird
+  name: dynamic-dns
   namespace: argocd
   annotations:
     # Wave 2: needs cert-manager + the ClusterIssuer (wave 0/1) ready for its
-    # Ingress to get a cert, and the sealed-secrets controller (wave 0) ready
-    # to unseal its config Secret.
+    # Ingress to get a cert.
     argocd.argoproj.io/sync-wave: "2"
 spec:
   project: default
   source:
-    repoURL: git@github.com:arestrepo99/personal-server.git 
+    repoURL: git@github.com:arestrepo99/personal-server.git # same value as terraform/terraform.tfvars gitops_repo_url
     targetRevision: main
-    path: gitops/netbird
+    path: gitops/dynamic-dns
     directory:
       recurse: true
   destination:
     server: https://kubernetes.default.svc
-    namespace: netbird
+    namespace: dynamic-dns
   syncPolicy:
     automated:
       prune: true

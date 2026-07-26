@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dynamic-dns
+  namespace: dynamic-dns
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - cloudarm.arec.me
+      secretName: dynamic-dns-tls
+  rules:
+    - host: cloudarm.arec.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dynamic-dns
+                port:
+                  name: http

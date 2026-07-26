@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dynamic-dns
+  namespace: dynamic-dns
+data:
+  app.py: |
+    from fastapi import FastAPI, Request
+    from fastapi.responses import PlainTextResponse
+    import uvicorn
+
+    app = FastAPI()
+
+    @app.get("/nic/update")
+    async def log_request(request: Request, hostname: str = "unknown"):
+        real_ip = request.client.host
+
+        print("\n" + "="*60)
+        print(f"REQUEST RECEIVED FROM UNIFI")
+        print(f"Real IP address: {real_ip}")
+        print(f"Hostname requested: {hostname}")
+        print(f"Full request URL: {request.url}")
+        print(f"Request headers: {dict(request.headers)}")
+        print("="*60 + "\n")
+
+        return PlainTextResponse(f"good {real_ip}")
+
+    if __name__ == "__main__":
+        uvicorn.run(app, host="0.0.0.0", port=8000, log_level="debug")
