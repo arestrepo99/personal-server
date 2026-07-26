@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+  annotations:
+    # Wave 2: needs cert-manager + the ClusterIssuer (wave 0/1) ready for its
+    # Ingress to get a cert. The argocd namespace/server itself is installed
+    # by Terraform (helm_release.argocd) -- this Application only adds the
+    # public Ingress on top, per the note in terraform/argocd.tf.
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:arestrepo99/personal-server.git # same value as terraform/terraform.tfvars gitops_repo_url
+    targetRevision: main
+    path: gitops/argocd
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
