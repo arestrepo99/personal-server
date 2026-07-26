@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: traefik-config
+  namespace: argocd
+  annotations:
+    # Wave 0: overrides k3s's built-in Traefik HelmChart (kube-system) so it
+    # applies before anything that depends on Traefik seeing real client IPs.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:arestrepo99/personal-server.git # same value as terraform/terraform.tfvars gitops_repo_url
+    targetRevision: main
+    path: gitops/traefik-config
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
