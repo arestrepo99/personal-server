@@ -11,14 +11,16 @@ data:
 
     app = FastAPI()
 
-    @app.get("/nic/update")
-    async def log_request(request: Request, hostname: str = "unknown"):
+    @app.api_route("/{full_path:path}", methods=["GET", "POST"])
+    async def log_request(request: Request, full_path: str):
         real_ip = request.client.host
 
         print("\n" + "="*60)
-        print(f"REQUEST RECEIVED FROM UNIFI")
+        print(f"REQUEST RECEIVED")
         print(f"Real IP address: {real_ip}")
-        print(f"Hostname requested: {hostname}")
+        print(f"Method: {request.method}")
+        print(f"Path: /{full_path}")
+        print(f"Query params: {dict(request.query_params)}")
         print(f"Full request URL: {request.url}")
         print(f"Request headers: {dict(request.headers)}")
         print("="*60 + "\n")
