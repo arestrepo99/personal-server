@@ -13,7 +13,8 @@ data:
 
     @app.api_route("/{full_path:path}", methods=["GET", "POST"])
     async def log_request(request: Request, full_path: str):
-        real_ip = request.client.host
+        forwarded_for = request.headers.get("x-forwarded-for")
+        real_ip = forwarded_for.split(",")[0].strip() if forwarded_for else request.client.host
 
         print("\n" + "="*60)
         print(f"REQUEST RECEIVED")
