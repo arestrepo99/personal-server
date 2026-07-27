@@ -1,0 +1,11 @@
+# Non-secret connection info -- server hostname and username aren't
+# sensitive, so these are committed in plaintext rather than sealed. Only
+# the password and PSK (in the Secret) get encrypted.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: netbird-l2tp-bridge-env
+  namespace: netbird-l2tp-bridge
+data:
+  L2TP_SERVER: "providencia.arec.me"
+  L2TP_USER: "server"

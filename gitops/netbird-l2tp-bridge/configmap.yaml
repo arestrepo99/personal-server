@@ -1,0 +1,120 @@
+# entrypoint.sh renders strongswan/xl2tpd/pppd config from env vars (sourced
+# from L2TP_SERVER/L2TP_USER in the netbird-l2tp-bridge-env ConfigMap, and
+# L2TP_PASSWORD/IPSEC_PSK in the netbird-l2tp-bridge-secret Secret) and
+# brings the L2TP/IPsec tunnel up. Auth is PSK (IPsec) + username/password
+# (L2TP/PPP via MSCHAPv2), the standard combo.
+#
+# This is stage 1 of the netbird-l2tp-bridge: get the L2TP tunnel itself
+# working and reachable from inside the pod. NetBird peer wiring and policy
+# routing (routing NetBird-peer-originated traffic out through ppp0) comes
+# in a later stage.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: netbird-l2tp-bridge
+  namespace: netbird-l2tp-bridge
+data:
+  entrypoint.sh: |
+    #!/bin/bash
+    set -euo pipefail
+
+    for v in L2TP_SERVER L2TP_USER L2TP_PASSWORD IPSEC_PSK; do
+      if [ -z "${!v:-}" ]; then
+        echo "Missing required env var: $v" >&2
+        exit 1
+      fi
+    done
+
+    cat > /etc/ipsec.conf <<EOF
+    config setup
+      uniqueids=no
+
+    conn l2tp-psk
+      authby=secret
+      pfs=no
+      auto=add
+      keyingtries=3
+      rekey=no
+      ikelifetime=8h
+      keylife=1h
+      type=transport
+      left=%defaultroute
+      leftprotoport=17/1701
+      right=${L2TP_SERVER}
+      rightprotoport=17/1701
+    EOF
+
+    cat > /etc/ipsec.secrets <<EOF
+    %any ${L2TP_SERVER} : PSK "${IPSEC_PSK}"
+    EOF
+    chmod 600 /etc/ipsec.secrets
+
+    mkdir -p /etc/xl2tpd
+    cat > /etc/xl2tpd/xl2tpd.conf <<EOF
+    [global]
+    port = 1701
+
+    [lac l2tp-tunnel]
+    lns = ${L2TP_SERVER}
+    ppp debug = yes
+    pppoptfile = /etc/ppp/options.l2tpd.client
+    length bit = yes
+    redial = yes
+    redial timeout = 5
+    max redials = 5
+    autodial = yes
+    EOF
+
+    cat > /etc/ppp/options.l2tpd.client <<EOF
+    ipcp-accept-local
+    ipcp-accept-remote
+    refuse-eap
+    require-mschap-v2
+    noccp
+    noauth
+    idle 1800
+    mtu 1410
+    mru 1410
+    defaultroute
+    usepeerdns
+    debug
+    lock
+    connect-delay 5000
+    name ${L2TP_USER}
+    password ${L2TP_PASSWORD}
+    EOF
+
+    mkdir -p /run/xl2tpd /var/run/xl2tpd
+    touch /var/run/xl2tpd.pid
+
+    echo "--- starting strongswan (IPsec/PSK) ---"
+    ipsec start
+    for i in $(seq 1 15); do
+      ipsec status &>/dev/null && break
+      sleep 1
+    done
+    ipsec auto --add l2tp-psk
+    ipsec auto --up l2tp-psk
+
+    echo "--- starting xl2tpd ---"
+    xl2tpd -D 2>&1 &
+    XL2TPD_PID=$!
+    sleep 3
+    echo "c l2tp-tunnel" > /var/run/xl2tpd/l2tp-control
+
+    echo "--- waiting for ppp0 ---"
+    for i in $(seq 1 30); do
+      if ip link show ppp0 &>/dev/null; then
+        echo "ppp0 is up:"
+        ip addr show ppp0
+        ip route
+        break
+      fi
+      sleep 2
+    done
+
+    if ! ip link show ppp0 &>/dev/null; then
+      echo "WARNING: ppp0 never came up -- check ipsec/xl2tpd logs above" >&2
+    fi
+
+    wait "$XL2TPD_PID"

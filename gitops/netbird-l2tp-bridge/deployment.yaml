@@ -1,0 +1,65 @@
+# Stage 1 of the netbird-l2tp-bridge: L2TP/IPsec client only, no NetBird
+# container yet. Goal right now is just to get the tunnel up and reachable
+# from inside the pod. Base image + apt-get-at-startup + ConfigMap script,
+# same pattern as gitops/dynamic-dns, since there's no image build/registry
+# pipeline in this repo.
+#
+# strongswan needs NET_ADMIN (XFRM policy/state via netlink) and NET_RAW.
+# xl2tpd/pppd need NET_ADMIN, NET_RAW, and /dev/ppp (the host's ppp_generic
+# driver -- confirmed loaded; the host is missing l2tp_ppp, but that's only
+# needed for xl2tpd's optional kernel-accelerated data path, not the default
+# userspace one, so this still works).
+#
+# strategy: Recreate -- most L2TP servers reject/kill a second concurrent
+# login with the same username, so two pods must never run at once. Also
+# avoids two NetBird identities fighting over one peer once that's added.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netbird-l2tp-bridge
+  namespace: netbird-l2tp-bridge
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: netbird-l2tp-bridge
+  template:
+    metadata:
+      labels:
+        app: netbird-l2tp-bridge
+    spec:
+      containers:
+        - name: l2tp-client
+          image: debian:bookworm-slim
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              apt-get update
+              apt-get install -y --no-install-recommends strongswan xl2tpd ppp iproute2 iputils-ping procps
+              chmod +x /scripts/entrypoint.sh
+              exec /scripts/entrypoint.sh
+          envFrom:
+            - configMapRef:
+                name: netbird-l2tp-bridge-env
+            - secretRef:
+                name: netbird-l2tp-bridge-secret
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN", "NET_RAW"]
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: dev-ppp
+              mountPath: /dev/ppp
+      volumes:
+        - name: scripts
+          configMap:
+            name: netbird-l2tp-bridge
+        - name: dev-ppp
+          hostPath:
+            path: /dev/ppp
+            type: CharDevice
