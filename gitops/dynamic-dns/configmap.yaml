@@ -8,25 +8,35 @@ data:
     from fastapi import FastAPI, Request
     from fastapi.responses import PlainTextResponse
     import uvicorn
+    import httpx
 
     app = FastAPI()
 
+    NAMECHEAP_UPDATE_URL = "https://dynamicdns.park-your-domain.com/update"
+
     @app.api_route("/{full_path:path}", methods=["GET", "POST"])
-    async def log_request(request: Request, full_path: str):
+    async def relay_request(request: Request, full_path: str):
         forwarded_for = request.headers.get("x-forwarded-for")
         real_ip = forwarded_for.split(",")[0].strip() if forwarded_for else 'not forwarded'
 
+        params = dict(request.query_params)
+        params["ip"] = real_ip
+
         print("\n" + "="*60)
-        print(f"REQUEST RECEIVED")
+        print(f"RELAYING REQUEST TO NAMECHEAP")
         print(f"Real IP address: {real_ip}")
-        print(f"Method: {request.method}")
-        print(f"Path: /{full_path}")
-        print(f"Query params: {dict(request.query_params)}")
-        print(f"Full request URL: {request.url}")
-        print(f"Request headers: {dict(request.headers)}")
+        print(f"Original query params: {dict(request.query_params)}")
+        print(f"Relayed query params: {params}")
         print("="*60 + "\n")
 
-        return PlainTextResponse(f"good {real_ip}")
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(NAMECHEAP_UPDATE_URL, params=params)
+
+        print(f"Namecheap response ({resp.status_code}):")
+        print(resp.text)
+        print("="*60 + "\n")
+
+        return PlainTextResponse(resp.text, status_code=resp.status_code)
 
     if __name__ == "__main__":
         uvicorn.run(app, host="0.0.0.0", port=8000, log_level="debug")
