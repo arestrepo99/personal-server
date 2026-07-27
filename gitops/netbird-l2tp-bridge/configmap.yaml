@@ -92,8 +92,7 @@ data:
       ipsec status &>/dev/null && break
       sleep 1
     done
-    ipsec auto --add l2tp-psk
-    ipsec auto --up l2tp-psk
+    ipsec up l2tp-psk
 
     echo "--- starting xl2tpd ---"
     xl2tpd -D 2>&1 &
