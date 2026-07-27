@@ -39,7 +39,7 @@ spec:
             - |
               set -e
               apt-get update
-              apt-get install -y --no-install-recommends strongswan xl2tpd ppp iproute2 iputils-ping procps
+              apt-get install -y --no-install-recommends strongswan strongswan-starter xl2tpd ppp iproute2 iputils-ping procps
               exec bash /scripts/entrypoint.sh
           envFrom:
             - configMapRef:

@@ -31,7 +31,6 @@ data:
 
     conn l2tp-psk
       authby=secret
-      pfs=no
       auto=add
       keyingtries=3
       rekey=no
