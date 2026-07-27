@@ -40,8 +40,7 @@ spec:
               set -e
               apt-get update
               apt-get install -y --no-install-recommends strongswan xl2tpd ppp iproute2 iputils-ping procps
-              chmod +x /scripts/entrypoint.sh
-              exec /scripts/entrypoint.sh
+              exec bash /scripts/entrypoint.sh
           envFrom:
             - configMapRef:
                 name: netbird-l2tp-bridge-env
