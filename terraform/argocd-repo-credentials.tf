@@ -21,7 +21,7 @@ resource "kubernetes_secret" "gitops_repo_creds" {
   data = {
     type          = "git"
     url           = var.gitops_repo_url
-    sshPrivateKey = file(pathexpand("~/.ssh/github_personal_server"))
+    sshPrivateKey = file(pathexpand(var.gitops_repo_ssh_key_path))
   }
 
   depends_on = [helm_release.argocd]

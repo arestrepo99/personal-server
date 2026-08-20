@@ -433,3 +433,88 @@ readiness deadlock, missing dashboard env vars) was found by reading actual
 pod logs / container files directly, not by re-deriving from docs. When
 something doesn't work, `kubectl logs` / `kubectl exec` into the running
 container is the fastest and most reliable path to ground truth here.
+
+## 2026-08-20 — Shared `charts/app` chart, wildcard DNS, cup deployed, GHCR creds in Terraform
+
+Three things, all driven by "add the cup viewer, and define an ingress that
+everything afterwards reuses".
+
+**1. New `charts/app` Helm chart** (`charts/app/`, documented in its README).
+A single generic chart for stateless HTTP workloads: Deployment + ClusterIP
+Service (always :80, forwarding to the container's real port so Ingress
+backends are uniform) + cert-manager-annotated Ingress. Values are validated
+at render time via a `fail`-based helper — a missing `image.tag` or
+`ingress.host` errors with a readable message instead of deploying something
+broken. `image.tag` is deliberately required with no default, so nothing
+silently floats on `latest`.
+
+Two defaults encode lessons already paid for in this repo:
+- `healthPath: ""` switches probes to a bare TCP check, the escape hatch for
+  the readiness/Ingress deadlock hit on NetBird (2026-07-25, bug #4).
+- `ingress.annotations` is left as an open seam so a future ExternalDNS
+  hostname annotation can be added per-app without touching the chart.
+
+**2. DNS strategy: wildcard, not the Namecheap API.** Considered running
+ExternalDNS with a Namecheap provider so records are created from the Ingress.
+Rejected: Namecheap has no official ExternalDNS provider (third-party webhook
+only), its API is gated on account balance/domain count, and it requires IP
+allowlisting plus API credentials living in the cluster. A single `*.arec.me`
+A record achieves the same zero-touch outcome with no credential and no moving
+parts. Confirmed for the user that this cannot clobber existing records:
+resolution always prefers an exact host match, so `netbird`/`cloudarm` keep
+their own A records and `*` only answers names that have none.
+
+TLS/renewal is unchanged and already automatic — the existing
+`letsencrypt-prod` ClusterIssuer + the Ingress annotation, with cert-manager
+re-issuing ~30 days before expiry.
+
+**3. `cup` app** — `gitops/apps/cup.yaml`, first consumer of the chart.
+`cup.arec.me`, image `ghcr.io/arestrepo99/cup` pinned to SHA `59367a9`,
+`containerPort: 8080`, `healthPath: /healthz` (local nginx check, no external
+round-trip, safe to gate readiness on). Sync-wave 2, matching the other
+cert-dependent apps.
+
+Verified anonymously that the GHCR package is **still private** (token request
+for `arestrepo99/cup` returns `DENIED`), so it will not pull as-is — see open
+items.
+
+**4. Terraform: GHCR pull credentials + secrets split out of git.**
+- New `terraform/ghcr-pull-secret.tf`: builds a `dockerconfigjson` Secret named
+  `ghcr` in each namespace listed in `var.ghcr_namespaces` (default `["cup"]`),
+  and creates those namespaces first (`ignore_changes` on labels/annotations so
+  ArgoCD adopting them doesn't cause perpetual diffs). Entirely skipped when
+  `github_token` is empty, which is the correct state if every image is public.
+  `nonsensitive()` is needed on the enable flag because `for_each` rejects
+  sensitive-derived values — only the boolean "is a token set" is unwrapped,
+  never the token.
+- Same bootstrap-layer justification as `argocd-repo-credentials.tf`: the git
+  deploy key and the registry PAT are the same GitHub account but two distinct
+  credentials with distinct jobs — kubelet cannot use an SSH key to pull from a
+  registry.
+- `~/.ssh/github_personal_server` is no longer hardcoded; it is
+  `var.gitops_repo_ssh_key_path`.
+- Secrets now live in `terraform/secrets.auto.tfvars` (gitignored, loaded
+  automatically by Terraform), with a committed
+  `secrets.auto.tfvars.example` documenting the contents. `.gitignore` gained
+  `terraform/*.auto.tfvars` plus a `!*.example` negation; both verified with
+  `git check-ignore`. `terraform.tfvars` stays tracked — it holds only the repo
+  URL.
+
+Verification done: `helm lint` clean, `helm template` rendered for the default
+path and for the TCP-probe / pull-secret / env branches, validation guards
+confirmed to fire, `terraform fmt` clean, `terraform validate` succeeds.
+Nothing applied to the cluster from this session — no `terraform apply`, no
+push.
+
+**Open items:**
+- **The `*.arec.me` A record does not exist yet** — user must add it in
+  Namecheap (Advanced DNS → A Record, host `*`, value `157.151.171.157`).
+  Until then `cup.arec.me` does not resolve and HTTP-01 issuance will fail.
+- **GHCR package is private** — either `./scripts/publish-container.sh --push
+  --public` in the cup repo, or set `github_token` and uncomment
+  `imagePullSecrets: [ghcr]` in `gitops/apps/cup.yaml`.
+- **Image tag `59367a9` is unverified** — taken from `add_cup.md`'s example.
+  Confirm it is the intended SHA before or after first sync.
+- **`gitops/apps/dynamicdns.yaml` contains the literal text `111`** — a stray
+  file sitting inside the root app-of-apps path, next to the real
+  `dynamic-dns.yaml`. Left untouched; flagged to the user for deletion.

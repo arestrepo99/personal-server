@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "app.name" . }}
+  labels: {{- include "app.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector: {{- include "app.selectorLabels" . | nindent 4 }}
+  ports:
+    # Always 80 on the Service side so Ingress backends are uniform across
+    # apps regardless of what port the container happens to listen on.
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

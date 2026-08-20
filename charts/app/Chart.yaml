@@ -1,0 +1,11 @@
+apiVersion: v2
+name: app
+description: >-
+  Generic chart for a single stateless HTTP workload on this cluster:
+  Deployment + Service + Ingress, with TLS issued and renewed automatically
+  by cert-manager/Let's Encrypt. Every future app should use this rather
+  than hand-writing another near-identical set of manifests.
+type: application
+version: 0.1.0
+# There is no single "app version" -- each release pins its own image tag.
+appVersion: "0.1.0"

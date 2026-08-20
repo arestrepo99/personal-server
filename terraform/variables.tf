@@ -38,3 +38,39 @@ variable "create_root_app" {
   type        = bool
   default     = false
 }
+
+# ---------------------------------------------------------------------------
+# GitHub credentials. Both of the below are for the SAME GitHub account
+# (arestrepo99) but are deliberately two different credentials with two
+# different jobs:
+#   - the deploy key below lets ArgoCD *clone the GitOps repo* (git/SSH);
+#   - the PAT lets the *cluster's container runtime pull images from GHCR*
+#     (registry/HTTPS). Kubelet cannot use an SSH key for a registry pull.
+# Set the secret ones in terraform/secrets.auto.tfvars, which is gitignored --
+# see terraform/secrets.auto.tfvars.example.
+# ---------------------------------------------------------------------------
+
+variable "gitops_repo_ssh_key_path" {
+  description = "Path to the SSH private key ArgoCD uses to clone gitops_repo_url. Kept outside the repo (in ~/.ssh) so the key material never lands in git; only this path does."
+  type        = string
+  default     = "~/.ssh/github_personal_server"
+}
+
+variable "github_username" {
+  description = "GitHub username that owns the private GHCR packages (same account as the GitOps repo deploy key)."
+  type        = string
+  default     = "arestrepo99"
+}
+
+variable "github_token" {
+  description = "GitHub PAT with the read:packages scope, used only to pull private images from ghcr.io. Never commit this -- set it in terraform/secrets.auto.tfvars (gitignored). Leave empty to skip creating the pull secret entirely, which is correct if every image is a public package."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "ghcr_namespaces" {
+  description = "Namespaces that get a copy of the `ghcr` imagePullSecret. A Secret is namespace-scoped, so every namespace running a private GHCR image needs its own copy -- add the namespace here when you add such an app, and reference it as `imagePullSecrets: [ghcr]` in the app's chart values."
+  type        = list(string)
+  default     = ["cup"]
+}

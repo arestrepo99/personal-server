@@ -9,6 +9,11 @@ terraform/*.tfvars.json
 # SSH private key in kubernetes_secret.gitops_repo_creds) -- never commit.
 terraform/tfplan
 terraform/*.tfplan
+# Real secret values (GHCR PAT, etc.) live in *.auto.tfvars, which Terraform
+# loads automatically and git never sees. The committed
+# terraform/secrets.auto.tfvars.example documents what goes in it.
+terraform/*.auto.tfvars
+!terraform/*.auto.tfvars.example
 # terraform.tfvars is NOT secret (just a repo URL) -- intentionally tracked.
 # .tf files are tracked directly (no .tf.txt source-of-truth split).
 

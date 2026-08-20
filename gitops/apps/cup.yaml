@@ -1,0 +1,52 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cup
+  namespace: argocd
+  annotations:
+    # Wave 2: needs cert-manager + the ClusterIssuer (waves 0/1) in place
+    # before its Ingress can get a certificate.
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:arestrepo99/personal-server.git # same value as terraform/terraform.tfvars gitops_repo_url
+    targetRevision: main
+    # The shared generic chart -- see charts/app/README.md. All per-app
+    # config lives in the inline values below, so adding another workload
+    # means copying this file and changing name/image/host, nothing else.
+    path: charts/app
+    helm:
+      releaseName: cup
+      values: |
+        image:
+          repository: ghcr.io/arestrepo99/cup
+          # Pinned SHA, not `latest` -- see add_cup.md. Bump deliberately.
+          tag: "59367a9"
+
+        # The image is a private GHCR package as of this writing. Two ways
+        # to make it pullable, pick one (see charts/app/README.md):
+        #   a) publish it public: ./scripts/publish-container.sh --push --public
+        #      in the cup repo -- then nothing else is needed here;
+        #   b) keep it private and seal a pull secret into this namespace,
+        #      then uncomment:
+        # imagePullSecrets:
+        #   - ghcr
+
+        containerPort: 8080
+        # nginx serving a static page; /healthz returns 200/"ok" once it is
+        # actually serving. Purely local, no external round-trip, so it is
+        # safe to gate readiness on.
+        healthPath: /healthz
+
+        ingress:
+          host: cup.arec.me
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cup
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

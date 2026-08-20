@@ -1,0 +1,75 @@
+# Defaults for the generic `app` chart. Anything here can be overridden from
+# the child ArgoCD Application's `spec.source.helm.values` block -- see
+# gitops/apps/cup.yaml for a worked example.
+
+# -- Container image. Prefer an immutable tag (a commit SHA) over `latest`:
+# `latest` moves under you and ArgoCD has no way to notice the drift.
+image:
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# -- Names of pre-existing imagePullSecrets in the release namespace. Needed
+# only for private registries (e.g. a private GHCR package); leave empty when
+# the image is world-pullable.
+imagePullSecrets: []
+
+replicaCount: 1
+
+# -- Port the container actually listens on. The Service always publishes 80
+# and forwards here, so Ingress backends never need to know the app's port.
+containerPort: 8080
+
+# -- Extra environment variables, as a plain map (name: value).
+env: {}
+
+# -- Probe path. Set to "" to fall back to a bare TCP check on containerPort,
+# which is the right choice for anything whose /health does an external
+# round-trip -- gating readiness on that deadlocks against the Ingress
+# (see logs/LOG.md, 2026-07-25, NetBird bug #4).
+healthPath: /
+probes:
+  enabled: true
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 256Mi
+
+# -- Hardening defaults. Override per-app only when a container genuinely
+# needs more (e.g. nginx images that must write a pidfile -- see
+# `readOnlyRootFilesystem`).
+securityContext:
+  runAsNonRoot: false
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
+
+ingress:
+  enabled: true
+  # -- Hostname to serve on. With the `*.arec.me` wildcard A record in
+  # Namecheap, any name under arec.me resolves with no DNS change needed;
+  # cert-manager then issues a per-host cert over HTTP-01 and renews it
+  # ~30 days before expiry, indefinitely and without intervention.
+  host: ""
+  className: traefik
+  clusterIssuer: letsencrypt-prod
+  path: /
+  pathType: Prefix
+  # -- Extra Ingress annotations. This is the seam for per-app ExternalDNS
+  # later (`external-dns.alpha.kubernetes.io/hostname`) without touching the
+  # chart -- the wildcard makes that unnecessary for now.
+  annotations: {}
+
+# -- Extra pod labels/annotations, merged into the pod template.
+podAnnotations: {}
+podLabels: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
