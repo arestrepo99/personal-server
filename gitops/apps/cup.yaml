@@ -30,8 +30,8 @@ spec:
         #      in the cup repo -- then nothing else is needed here;
         #   b) keep it private and seal a pull secret into this namespace,
         #      then uncomment:
-        # imagePullSecrets:
-        #   - ghcr
+        imagePullSecrets:
+          - ghcr
 
         containerPort: 8080
         # nginx serving a static page; /healthz returns 200/"ok" once it is
