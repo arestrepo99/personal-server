@@ -21,8 +21,10 @@ spec:
       values: |
         image:
           repository: ghcr.io/arestrepo99/cup
-          # Pinned SHA, not `latest` -- see add_cup.md. Bump deliberately.
-          tag: "5bc944d"
+          # `latest` + Always so new pushes land without bumping this file --
+          # cup rebuilds frequently and doesn't cut stable release tags yet.
+          tag: "latest"
+          pullPolicy: Always
 
         # The image is a private GHCR package as of this writing. Two ways
         # to make it pullable, pick one (see charts/app/README.md):
