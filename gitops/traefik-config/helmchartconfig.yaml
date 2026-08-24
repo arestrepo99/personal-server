@@ -5,8 +5,6 @@ metadata:
   namespace: kube-system
 spec:
   valuesContent: |-
-    hostNetwork: true
-    dnsPolicy: ClusterFirstWithHostNet
     service:
       spec:
         externalTrafficPolicy: Local
