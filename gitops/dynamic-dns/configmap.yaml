@@ -6,7 +6,7 @@ metadata:
 data:
   app.py: |
     from fastapi import FastAPI, Request
-    from fastapi.responses import PlainTextResponse
+    from fastapi.responses import PlainTextResponse, Response
     import uvicorn
     import httpx
 
@@ -18,9 +18,11 @@ data:
     async def relay_request(request: Request, full_path: str):
         forwarded_for = request.headers.get("x-forwarded-for")
         real_ip = forwarded_for.split(",")[0].strip() if forwarded_for else 'not forwarded'
-
         params = dict(request.query_params)
         params["ip"] = real_ip
+        
+        if 'password' not in params:
+          return Response(status_code=400)
 
         print("\n" + "="*60)
         print(f"RELAYING REQUEST TO NAMECHEAP")
