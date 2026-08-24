@@ -16,17 +16,21 @@ data:
 
     @app.api_route("/{full_path:path}", methods=["GET", "POST"])
     async def relay_request(request: Request, full_path: str):
-        forwarded_for = request.headers.get("x-forwarded-for")
-        real_ip = forwarded_for.split(",")[0].strip() if forwarded_for else 'not forwarded'
         params = dict(request.query_params)
-        params["ip"] = real_ip
-        
+
         if 'password' not in params:
           return Response(status_code=400)
+        if not params['password'].startswith('6437'):
+          return Response(status_code=400)
+
+        # Drop any ip param the caller sent (it's usually a LAN address, not
+        # our public IP). Omitting it lets Namecheap auto-detect the public
+        # IP from the outbound connection this relay makes below, which
+        # actually egresses through our real WAN uplink.
+        params.pop("ip", None)
 
         print("\n" + "="*60)
         print(f"RELAYING REQUEST TO NAMECHEAP")
-        print(f"Real IP address: {real_ip}")
         print(f"Original query params: {dict(request.query_params)}")
         print(f"Relayed query params: {params}")
         print("="*60 + "\n")
