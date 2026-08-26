@@ -73,7 +73,11 @@ data:
     length bit = yes
     redial = yes
     redial timeout = 5
-    max redials = 5
+    # Effectively unlimited. This is an always-on bridge: with a small budget
+    # xl2tpd gives up for good after a few failures and the pod then sits
+    # doing nothing forever, since xl2tpd stays alive and nothing re-dials.
+    # Any transient server-side condition has to be able to self-heal.
+    max redials = 10000
     autodial = yes
     EOF
 
@@ -146,6 +150,26 @@ data:
 
     mkdir -p /run/xl2tpd /var/run/xl2tpd
     touch /var/run/xl2tpd.pid
+
+    # Tear the session down cleanly on SIGTERM. Without this, pod deletion
+    # kills us abruptly: no L2TP StopCCN, no IPsec delete. The server is left
+    # holding a session for this username, and since it rejects a second
+    # concurrent login for the same user, the *next* pod's SCCRQ is ignored
+    # until that stale session ages out -- which is why the tunnel came up
+    # once and then refused to reconnect across restarts.
+    shutdown() {
+      echo "--- SIGTERM: closing L2TP session and IPsec ---" >&2
+      echo "d l2tp-tunnel" > /var/run/xl2tpd/l2tp-control 2>/dev/null || true
+      sleep 2
+      kill -TERM "${XL2TPD_PID:-0}" 2>/dev/null || true
+      # Give xl2tpd a moment to send StopCCN before dropping the SA it
+      # travels over, otherwise the teardown never reaches the server.
+      sleep 2
+      ipsec down l2tp-psk 2>/dev/null || true
+      ipsec stop 2>/dev/null || true
+      exit 0
+    }
+    trap shutdown TERM INT
 
     echo "--- starting strongswan (IPsec/PSK) ---"
     ipsec start
