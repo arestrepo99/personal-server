@@ -9,15 +9,12 @@ metadata:
 data:
   L2TP_SERVER: "providencia.arec.me"
 
-  # IMPORTANT: this must NOT be the same username netbird-l2tp-bridge uses.
-  # The L2TP server rejects a second concurrent login for the same user (see
-  # the Recreate strategy comment in deployment.yaml), so two bridges sharing
-  # one username means whichever pod dials second never gets a session --
-  # and restarting either one can steal the tunnel from the other. Give this
-  # bridge its own account on the L2TP server, or run only one bridge at a
-  # time. Placeholder below is deliberately distinct so it fails loudly
-  # rather than silently fighting the netbird bridge.
-  L2TP_USER: "server-tailscale"
+  # Same account the netbird bridge used. The L2TP server rejects a second
+  # concurrent login for the same username, so netbird-l2tp-bridge must be
+  # stopped before this pod dials -- its Application is commented out in
+  # gitops/apps/, but see the README: pruning the Application does NOT stop
+  # the workload. Confirm the netbird pod is gone first.
+  L2TP_USER: "server"
 
   # Subnets on the far side of the tunnel, routed out ppp0. Space-separated.
   # 192.168.1.0/24 is the L2TP server's own LAN (the server answers on

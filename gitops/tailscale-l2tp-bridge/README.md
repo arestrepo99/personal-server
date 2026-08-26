@@ -14,17 +14,25 @@ apply here verbatim. This README covers only what's different.
 
 ## Before you deploy: the shared L2TP account
 
-Most L2TP servers reject a second concurrent login for the same username.
-If this bridge and `netbird-l2tp-bridge` both dial `providencia.arec.me` as
-`server`, whichever pod dials second never gets a session, and restarting
-either one can steal the tunnel from the other -- intermittently, which is
-the worst way to find out.
+This bridge reuses the `server` account on `providencia.arec.me` -- the same
+one `netbird-l2tp-bridge` uses. The L2TP server rejects a second concurrent
+login for the same username, so the two can never run at once: whichever
+pod dials second never gets a session, and restarting either can steal the
+tunnel from the other.
 
-`env-configmap.yaml` therefore ships `L2TP_USER: "server-tailscale"`, a
-username that does not exist yet. Either create it on the L2TP server, or
-scale `netbird-l2tp-bridge` to 0 and set this back to `server`. It fails
-loudly (no IPCP address, `ppp0` never gets an `inet`) rather than quietly
-fighting the other bridge.
+`gitops/apps/netbird-l2tp-bridge.yaml` is commented out, which stops ArgoCD
+from managing it -- but **that does not stop the workload**. The Application
+carries no `resources-finalizer.argocd.argoproj.io`, so when `root-app`
+prunes it the delete is non-cascading and the Deployment keeps running,
+orphaned, still holding the L2TP session. Confirm it is actually gone:
+
+```bash
+kubectl get deploy -n netbird-l2tp-bridge   # expect: no resources found
+```
+
+If it is still there, either delete the namespace (after the Application has
+been pruned, or ArgoCD just recreates it) or restore the Application and set
+`replicas: 0` in its Deployment -- the reversible option.
 
 ## Secrets
 
