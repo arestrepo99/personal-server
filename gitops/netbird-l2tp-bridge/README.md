@@ -69,19 +69,22 @@ so it's re-applied on every redial rather than once at startup:
 ### Sealing the setup key
 
 Create a **reusable** setup key in the dashboard (`https://netbird.arec.me`)
--- reusable because the sidecar's state is an `emptyDir` and re-registers on
-restart. Then seal it (the plaintext key never touches disk):
+-- reusable because the sidecar's state is an `emptyDir`, so the peer
+re-registers with this key on every restart and a one-off key would work
+exactly once.
+
+Then run:
 
 ```bash
-kubectl create secret generic netbird-l2tp-bridge-netbird \
-  --namespace netbird-l2tp-bridge \
-  --from-literal=NB_SETUP_KEY='<setup key from the dashboard>' \
-  --dry-run=client -o yaml \
-| kubeseal --format yaml \
-    --controller-name sealed-secrets-controller \
-    --controller-namespace sealed-secrets \
-> netbird-secret.sealed.yaml
+./seal-netbird-secret.sh
 ```
+
+It prompts for the key with input hidden and pipes it straight into
+`kubeseal`, so the plaintext never reaches a file, your shell history, or
+the process list (which `--from-literal` on a command line would expose).
+Only the encrypted `netbird-secret.sealed.yaml` is written, and only the
+in-cluster controller can decrypt it -- so it's safe to commit. The script
+refuses to write anything that isn't a real `SealedSecret`.
 
 Commit `netbird-secret.sealed.yaml`. Until it exists the `netbird`
 container crashloops while the L2TP tunnel keeps working -- the secretRef
