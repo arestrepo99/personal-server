@@ -16,12 +16,16 @@ data:
 
     @app.api_route("/{full_path:path}", methods=["GET", "POST"])
     async def relay_request(request: Request, full_path: str):
+        forwarded_for = request.headers.get("x-forwarded-for")
+        real_ip = forwarded_for.split(",")[0].strip() if forwarded_for else 'not forwarded'
+
         params = dict(request.query_params)
+        params["ip"] = real_ip
 
         if 'password' not in params:
           return Response(status_code=400)
         if not params['password'].startswith('6437'):
-          return Response(status_code=400)
+          return Response(status_code=400, content=f"Invalid request from {real_ip}")
 
         # Drop any ip param the caller sent (it's usually a LAN address, not
         # our public IP). Omitting it lets Namecheap auto-detect the public
@@ -33,6 +37,7 @@ data:
         print(f"RELAYING REQUEST TO NAMECHEAP")
         print(f"Original query params: {dict(request.query_params)}")
         print(f"Relayed query params: {params}")
+        print(f"Real IP: {real_ip}")
         print("="*60 + "\n")
 
         async with httpx.AsyncClient() as client:
