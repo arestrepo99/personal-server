@@ -1,0 +1,156 @@
+# Tailscale twin of gitops/netbird-l2tp-bridge/deployment.yaml. The L2TP
+# container is identical; only the sidecar differs (tailscaled instead of
+# netbird). Base image + apt-get-at-startup + ConfigMap script, same pattern
+# as gitops/dynamic-dns, since there's no image build/registry pipeline in
+# this repo.
+#
+# strongswan needs NET_ADMIN (XFRM policy/state via netlink) and NET_RAW.
+# xl2tpd/pppd need NET_ADMIN, NET_RAW, and /dev/ppp (the host's ppp_generic
+# driver -- confirmed loaded; the host is missing l2tp_ppp, but that's only
+# needed for xl2tpd's optional kernel-accelerated data path, not the default
+# userspace one, so this still works).
+#
+# strategy: Recreate -- most L2TP servers reject/kill a second concurrent
+# login with the same username, so two pods must never run at once. Also
+# avoids two Tailscale identities fighting over one node name.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tailscale-l2tp-bridge
+  namespace: tailscale-l2tp-bridge
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: tailscale-l2tp-bridge
+  template:
+    metadata:
+      labels:
+        app: tailscale-l2tp-bridge
+    spec:
+      containers:
+        - name: l2tp-client
+          image: debian:bookworm-slim
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              # Retry: a transient mirror failure here exits 100 and takes the
+              # whole container down (observed). Since packages are fetched on
+              # every start, that turns any blip into a restart loop.
+              for i in 1 2 3; do
+                apt-get update \
+                  && apt-get install -y --no-install-recommends \
+                       strongswan strongswan-starter xl2tpd ppp iproute2 \
+                       iputils-ping procps iptables \
+                  && break
+                echo "apt attempt $i failed, retrying..." >&2
+                [ "$i" = 3 ] && exit 1
+                sleep 5
+              done
+              exec bash /scripts/entrypoint.sh
+          envFrom:
+            - configMapRef:
+                name: tailscale-l2tp-bridge-env
+            - secretRef:
+                name: tailscale-l2tp-bridge-secret
+          securityContext:
+            # privileged is required for /dev/ppp, not just for the caps. The
+            # hostPath mount below makes the device *node* visible, but the
+            # device cgroup still denies open() on it -- pppd got EPERM and
+            # reported the misleading "this system lacks PPP kernel support"
+            # (the host kernel has ppp_generic builtin and is fine). k8s has
+            # no per-device allowlist in the pod spec, so privileged is the
+            # only way to grant it. Caps kept explicit for documentation;
+            # privileged already implies them.
+            privileged: true
+            capabilities:
+              add: ["NET_ADMIN", "NET_RAW"]
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: dev-ppp
+              mountPath: /dev/ppp
+
+        # The Tailscale node. It shares this pod's network namespace, so it
+        # sees ppp0 directly and the routing the l2tp container's ip-up hook
+        # installs applies to its forwarded traffic with no extra plumbing.
+        # That shared netns is the whole reason this is a sidecar and not its
+        # own pod.
+        #
+        # privileged for the same reason as the l2tp container: it needs
+        # /dev/net/tun to bring up tailscale0, and a hostPath mount alone only
+        # exposes the device node -- the device cgroup still denies open().
+        - name: tailscale
+          image: tailscale/tailscale:latest
+          env:
+            # Kernel networking, not userspace-networking: a userspace tailscaled
+            # can only proxy its own connections, it can't act as a subnet router
+            # or exit node, which is the entire point of this bridge.
+            - name: TS_USERSPACE
+              value: "false"
+            # State on the emptyDir below. Without TS_STATE_DIR the container
+            # defaults to storing state in a Kubernetes Secret and needs RBAC
+            # for it; TS_KUBE_SECRET="" turns that path off explicitly.
+            - name: TS_STATE_DIR
+              value: /var/lib/tailscale
+            - name: TS_KUBE_SECRET
+              value: ""
+            - name: TS_HOSTNAME
+              value: tailscale-l2tp-bridge
+            # Advertised to the tailnet. Comma-separated here (tailscale up
+            # syntax), unlike the space-separated REMOTE_SUBNETS in the
+            # ConfigMap that the ip-up hook iterates -- keep the two in sync.
+            # These still have to be *approved* in the admin console; the
+            # manifest can only offer them.
+            - name: TS_ROUTES
+              value: "192.168.1.0/24,192.168.20.0/24"
+            # Exit node: peers' internet egress via the L2TP tunnel. Also has
+            # to be approved in the admin console, and enabled per-client.
+            # Self-hosted control plane (headscale) would go here too, as
+            # --login-server=https://...
+            - name: TS_EXTRA_ARGS
+              value: "--advertise-exit-node"
+            # Do NOT let MagicDNS rewrite /etc/resolv.conf. The netns is shared
+            # with the l2tp container, so that would replace cluster DNS for
+            # both containers and break service resolution.
+            - name: TS_ACCEPT_DNS
+              value: "false"
+          envFrom:
+            # optional: a missing secretRef blocks the whole *pod* from
+            # starting, which would take the working L2TP tunnel down with
+            # it. This way the bridge keeps running and only this container
+            # crashloops until the auth key is sealed (see README).
+            - secretRef:
+                name: tailscale-l2tp-bridge-tailscale
+                optional: true
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["NET_ADMIN", "NET_RAW", "SYS_ADMIN"]
+          volumeMounts:
+            - name: dev-net-tun
+              mountPath: /dev/net/tun
+            - name: tailscale-state
+              mountPath: /var/lib/tailscale
+      volumes:
+        - name: scripts
+          configMap:
+            name: tailscale-l2tp-bridge
+        - name: dev-ppp
+          hostPath:
+            path: /dev/ppp
+            type: CharDevice
+        - name: dev-net-tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+        # emptyDir, not a PVC: Tailscale state is re-derivable by re-running
+        # the auth key, and a PVC would pin this pod to one node for no gain.
+        # The tradeoff is a new node identity per restart -- see the README's
+        # note on reusable + ephemeral keys.
+        - name: tailscale-state
+          emptyDir: {}

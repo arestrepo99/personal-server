@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tailscale-l2tp-bridge
+  namespace: argocd
+  annotations:
+    # Wave 1: needs the sealed-secrets controller (wave 0) ready to unseal
+    # its Secret. No cert-manager/Ingress dependency, so doesn't need wave 2.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:arestrepo99/personal-server.git
+    targetRevision: main
+    path: gitops/tailscale-l2tp-bridge
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tailscale-l2tp-bridge
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

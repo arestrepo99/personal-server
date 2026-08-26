@@ -1,0 +1,252 @@
+# entrypoint.sh renders strongswan/xl2tpd/pppd config from env vars (sourced
+# from L2TP_SERVER/L2TP_USER in the tailscale-l2tp-bridge-env ConfigMap, and
+# L2TP_PASSWORD/IPSEC_PSK in the tailscale-l2tp-bridge-secret Secret) and
+# brings the L2TP/IPsec tunnel up. Auth is PSK (IPsec) + username/password
+# (L2TP/PPP via MSCHAPv2), the standard combo.
+#
+# This is the Tailscale twin of gitops/netbird-l2tp-bridge: identical L2TP
+# side, with a tailscaled sidecar instead of a netbird one. The two are
+# deliberately independent (own namespace, own Secrets) so either can be
+# deleted without touching the other -- but see L2TP_USER in
+# env-configmap.yaml before running both at once.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tailscale-l2tp-bridge
+  namespace: tailscale-l2tp-bridge
+data:
+  entrypoint.sh: |
+    #!/bin/bash
+    set -euo pipefail
+
+    for v in L2TP_SERVER L2TP_USER L2TP_PASSWORD IPSEC_PSK; do
+      if [ -z "${!v:-}" ]; then
+        echo "Missing required env var: $v" >&2
+        exit 1
+      fi
+    done
+
+    cat > /etc/ipsec.conf <<EOF
+    config setup
+      uniqueids=no
+
+    conn l2tp-psk
+      keyexchange=ikev1
+      authby=secret
+      ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
+      esp=aes256-sha1,aes128-sha1,3des-sha1!
+      auto=add
+      keyingtries=%forever
+      rekey=no
+      ikelifetime=8h
+      keylife=1h
+      # The IKE_SA can outlive the CHILD_SA. When that happened the tunnel
+      # was silently dead: UDP/1701 left unencrypted (no 17/1701 xfrm policy)
+      # and the server dropped it, showing up only as xl2tpd "Maximum retries
+      # exceeded". Tear the whole connection down on DPD/close so the
+      # watchdog below can rebuild it, rather than sitting half-up forever.
+      dpdaction=restart
+      dpddelay=30s
+      dpdtimeout=120s
+      closeaction=restart
+      type=transport
+      left=%defaultroute
+      leftprotoport=17/1701
+      right=${L2TP_SERVER}
+      rightprotoport=17/1701
+      rightid=%any
+    EOF
+
+    cat > /etc/ipsec.secrets <<EOF
+    %any ${L2TP_SERVER} : PSK "${IPSEC_PSK}"
+    EOF
+    chmod 600 /etc/ipsec.secrets
+
+    mkdir -p /etc/xl2tpd
+    # NOTE: no comments inside this heredoc. xl2tpd's parser has no comment
+    # syntax for '#' -- it reports "line too long or no '=' in data" and then
+    # refuses to load the *entire* config, so xl2tpd starts but never dials.
+    # (strongswan's ipsec.conf and pppd's options file both accept '#', which
+    # is why only this file is affected.) Keep explanations out here.
+    #
+    # "max redials" is effectively unlimited below: this is an always-on
+    # bridge, and with a small budget xl2tpd gives up for good after a few
+    # failures while staying alive, so the pod sits idle forever with nothing
+    # to recover it. Any transient server-side condition must self-heal.
+    cat > /etc/xl2tpd/xl2tpd.conf <<EOF
+    [global]
+    port = 1701
+
+    [lac l2tp-tunnel]
+    lns = ${L2TP_SERVER}
+    ppp debug = yes
+    pppoptfile = /etc/ppp/options.l2tpd.client
+    length bit = yes
+    redial = yes
+    redial timeout = 5
+    max redials = 10000
+    autodial = yes
+    EOF
+
+    cat > /etc/ppp/options.l2tpd.client <<EOF
+    ipcp-accept-local
+    ipcp-accept-remote
+    refuse-eap
+    require-mschap-v2
+    noccp
+    noauth
+    idle 1800
+    mtu 1410
+    mru 1410
+    defaultroute
+    usepeerdns
+    debug
+    lock
+    connect-delay 5000
+    name ${L2TP_USER}
+    password ${L2TP_PASSWORD}
+    EOF
+
+    # Routing for the Tailscale sidecar. This runs from pppd's ip-up hook rather
+    # than inline, because ppp0 only exists (and only has an address) once
+    # IPCP completes -- and it's recreated on every redial, which wipes these.
+    # The hook re-applies them each time the link comes back.
+    #
+    # The sidecar shares this pod's network namespace, so tailscale0 and ppp0 sit in
+    # the same netns and this one script covers both containers' routing.
+    mkdir -p /etc/ppp/ip-up.d
+    cat > /etc/ppp/ip-up.d/50-tailscale-routes <<'HOOK'
+    #!/bin/bash
+    # Args from pppd: $1=iface $2=tty $3=speed $4=local-ip $5=remote-ip
+    set -u
+    IFACE="$1"
+    [ "$IFACE" = "ppp0" ] || exit 0
+
+    # pppd runs ip-up with a sanitized environment, so don't rely on
+    # inheriting REMOTE_SUBNETS from the container env -- read it from the
+    # file the entrypoint wrote.
+    [ -f /etc/ppp/tailscale-routes.env ] && . /etc/ppp/tailscale-routes.env
+    : "${TAILSCALE_CIDR:=100.64.0.0/10}"
+
+    echo "ip-up: applying tailscale bridge routing on $IFACE" >&2
+
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null
+
+    # Specific remote subnets: plain routes in the main table, so anything
+    # Tailscale forwards to them goes out the tunnel.
+    for net in ${REMOTE_SUBNETS:-}; do
+      ip route replace "$net" dev "$IFACE" || true
+    done
+
+    # Exit-node path. The pod's default route deliberately stays on eth0 (see
+    # README) so the pod keeps cluster and Tailscale control-plane access. Only
+    # Tailscale-originated traffic is policy-routed out the tunnel.
+    #
+    # Match on source prefix, NOT "iif tailscale0". An iif rule resolves the ifindex
+    # when it's added, and this hook runs when ppp0 comes up -- which can be
+    # before the tailscale sidecar has created tailscale0. The rule then shows as
+    # "iif tailscale0 [detached]" and never re-attaches when tailscale0 appears, so peer
+    # traffic silently falls through to the main table and egresses via eth0
+    # instead of the tunnel. A silent leak is worse than a visible failure.
+    # Tailscale hands out addresses from the CGNAT range, so the source prefix
+    # is stable and needs no interface to exist.
+    #
+    # tailscaled installs its own rules at priorities 5210-5270 (table 52),
+    # which sort ahead of this one (~32765). That's fine: table 52 only holds
+    # routes for tailnet destinations, so traffic bound for the internet or
+    # for REMOTE_SUBNETS falls through to the rule below.
+    ip route replace default dev "$IFACE" table 100 || true
+    ip rule del iif tailscale0 lookup 100 2>/dev/null || true
+    ip rule del from "${TAILSCALE_CIDR}" lookup 100 2>/dev/null || true
+    ip rule add from "${TAILSCALE_CIDR}" lookup 100 || true
+
+    # NAT out the tunnel: the far side only knows our ppp0 address, so
+    # forwarded peer traffic has to be masqueraded to it.
+    iptables -t nat -C POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null \
+      || iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
+
+    echo "ip-up: routing applied" >&2
+    HOOK
+    chmod 755 /etc/ppp/ip-up.d/50-tailscale-routes
+    {
+      printf 'REMOTE_SUBNETS="%s"\n' "${REMOTE_SUBNETS:-}"
+      printf 'TAILSCALE_CIDR="%s"\n' "${TAILSCALE_CIDR:-100.64.0.0/10}"
+    } > /etc/ppp/tailscale-routes.env
+
+    mkdir -p /run/xl2tpd /var/run/xl2tpd
+    touch /var/run/xl2tpd.pid
+
+    # Tear the session down cleanly on SIGTERM. Without this, pod deletion
+    # kills us abruptly: no L2TP StopCCN, no IPsec delete. The server is left
+    # holding a session for this username, and since it rejects a second
+    # concurrent login for the same user, the *next* pod's SCCRQ is ignored
+    # until that stale session ages out -- which is why the tunnel came up
+    # once and then refused to reconnect across restarts.
+    shutdown() {
+      echo "--- SIGTERM: closing L2TP session and IPsec ---" >&2
+      echo "d l2tp-tunnel" > /var/run/xl2tpd/l2tp-control 2>/dev/null || true
+      sleep 2
+      kill -TERM "${XL2TPD_PID:-0}" 2>/dev/null || true
+      # Give xl2tpd a moment to send StopCCN before dropping the SA it
+      # travels over, otherwise the teardown never reaches the server.
+      sleep 2
+      ipsec down l2tp-psk 2>/dev/null || true
+      ipsec stop 2>/dev/null || true
+      exit 0
+    }
+    trap shutdown TERM INT
+
+    echo "--- starting strongswan (IPsec/PSK) ---"
+    ipsec start
+
+    # charon answers "ipsec status" before starter has finished loading conns
+    # from ipsec.conf, so waiting on status alone raced and gave us
+    # "no config named 'l2tp-psk'". Wait for the conn itself to appear.
+    for i in $(seq 1 30); do
+      ipsec status 2>/dev/null | grep -q 'l2tp-psk' && break
+      sleep 1
+    done
+
+    # The L2TP data path only works once this transport SA is up -- without it
+    # xl2tpd's UDP/1701 packets go out in the clear and the server ignores
+    # them. Retry rather than give up: the SA is a hard prerequisite.
+    for i in $(seq 1 5); do
+      if ipsec up l2tp-psk; then
+        break
+      fi
+      echo "ipsec up failed (attempt $i), retrying..." >&2
+      sleep 5
+    done
+
+    if ! ipsec status | grep -q 'INSTALLED'; then
+      echo "ERROR: IPsec SA never established -- not dialing L2TP" >&2
+      exit 1
+    fi
+
+    echo "--- starting xl2tpd ---"
+    xl2tpd -D 2>&1 &
+    XL2TPD_PID=$!
+    sleep 3
+    echo "c l2tp-tunnel" > /var/run/xl2tpd/l2tp-control
+
+    # Wait for an actual IPCP-assigned address, not just for the interface to
+    # exist. pppd creates ppp0 the moment it starts -- before authentication
+    # and IPCP -- so checking "ip link show ppp0" reported "ppp0 is up" while
+    # it was still state DOWN with no address, and would report success even
+    # when MSCHAPv2 auth failed. An address means the link is genuinely usable.
+    echo "--- waiting for ppp0 to get an address ---"
+    for i in $(seq 1 45); do
+      if ip -4 addr show ppp0 2>/dev/null | grep -q 'inet '; then
+        echo "ppp0 is up:"
+        ip addr show ppp0
+        ip route
+        break
+      fi
+      sleep 2
+    done
+
+    if ! ip -4 addr show ppp0 2>/dev/null | grep -q 'inet '; then
+      echo "WARNING: ppp0 never got an address -- check ipsec/xl2tpd/pppd logs above" >&2
+    fi
+
+    wait "$XL2TPD_PID"

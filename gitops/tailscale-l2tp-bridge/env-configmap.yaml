@@ -1,0 +1,38 @@
+# Non-secret connection info -- server hostname and username aren't
+# sensitive, so these are committed in plaintext rather than sealed. Only
+# the password, PSK, and Tailscale auth key (in Secrets) get encrypted.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tailscale-l2tp-bridge-env
+  namespace: tailscale-l2tp-bridge
+data:
+  L2TP_SERVER: "providencia.arec.me"
+
+  # IMPORTANT: this must NOT be the same username netbird-l2tp-bridge uses.
+  # The L2TP server rejects a second concurrent login for the same user (see
+  # the Recreate strategy comment in deployment.yaml), so two bridges sharing
+  # one username means whichever pod dials second never gets a session --
+  # and restarting either one can steal the tunnel from the other. Give this
+  # bridge its own account on the L2TP server, or run only one bridge at a
+  # time. Placeholder below is deliberately distinct so it fails loudly
+  # rather than silently fighting the netbird bridge.
+  L2TP_USER: "server-tailscale"
+
+  # Subnets on the far side of the tunnel, routed out ppp0. Space-separated.
+  # 192.168.1.0/24 is the L2TP server's own LAN (the server answers on
+  # 192.168.1.15); 192.168.20.0/24 is where the DNS server pppd hands us
+  # (192.168.20.1) lives.
+  #
+  # These build the routes inside the pod. TS_ROUTES on the tailscale
+  # container (deployment.yaml) is what *advertises* them to the tailnet --
+  # keep the two lists in sync, but note TS_ROUTES is comma-separated while
+  # this one is space-separated (pppd's ip-up hook iterates it as words).
+  REMOTE_SUBNETS: "192.168.1.0/24 192.168.20.0/24"
+
+  # Source prefix used to policy-route tailnet traffic out ppp0. Tailscale
+  # allocates peer addresses from the CGNAT range (100.64.0.0/10), same
+  # range NetBird uses. Matching on source rather than "iif tailscale0"
+  # keeps the rule valid even when ppp0 comes up before tailscaled has
+  # created its interface.
+  TAILSCALE_CIDR: "100.64.0.0/10"
