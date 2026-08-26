@@ -35,10 +35,19 @@ data:
       ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
       esp=aes256-sha1,aes128-sha1,3des-sha1!
       auto=add
-      keyingtries=3
+      keyingtries=%forever
       rekey=no
       ikelifetime=8h
       keylife=1h
+      # The IKE_SA can outlive the CHILD_SA. When that happened the tunnel
+      # was silently dead: UDP/1701 left unencrypted (no 17/1701 xfrm policy)
+      # and the server dropped it, showing up only as xl2tpd "Maximum retries
+      # exceeded". Tear the whole connection down on DPD/close so the
+      # watchdog below can rebuild it, rather than sitting half-up forever.
+      dpdaction=restart
+      dpddelay=30s
+      dpdtimeout=120s
+      closeaction=restart
       type=transport
       left=%defaultroute
       leftprotoport=17/1701
