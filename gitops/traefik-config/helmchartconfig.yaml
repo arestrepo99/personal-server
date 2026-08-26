@@ -16,3 +16,6 @@ spec:
     service:
       spec:
         type: ClusterIP
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate: null
