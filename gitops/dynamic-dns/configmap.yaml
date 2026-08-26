@@ -25,8 +25,7 @@ data:
         if 'password' not in params:
           return Response(status_code=400)
         if not params['password'].startswith('6437'):
-          return Response(status_code=400, content=f"Invalid request from {real_ip}")
-        params.pop("ip", None)
+          return Response(status_code=400, content=f"Invalid request from {real_ip}")        params.pop("ip", None)
 
         print("\n" + "="*60)
         print(f"RELAYING REQUEST TO NAMECHEAP")
