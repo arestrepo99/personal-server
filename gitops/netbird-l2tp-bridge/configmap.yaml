@@ -30,7 +30,10 @@ data:
       uniqueids=no
 
     conn l2tp-psk
+      keyexchange=ikev1
       authby=secret
+      ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
+      esp=aes256-sha1,aes128-sha1,3des-sha1!
       auto=add
       keyingtries=3
       rekey=no
@@ -41,6 +44,7 @@ data:
       leftprotoport=17/1701
       right=${L2TP_SERVER}
       rightprotoport=17/1701
+      rightid=%any
     EOF
 
     cat > /etc/ipsec.secrets <<EOF
@@ -88,11 +92,30 @@ data:
 
     echo "--- starting strongswan (IPsec/PSK) ---"
     ipsec start
-    for i in $(seq 1 15); do
-      ipsec status &>/dev/null && break
+
+    # charon answers "ipsec status" before starter has finished loading conns
+    # from ipsec.conf, so waiting on status alone raced and gave us
+    # "no config named 'l2tp-psk'". Wait for the conn itself to appear.
+    for i in $(seq 1 30); do
+      ipsec status 2>/dev/null | grep -q 'l2tp-psk' && break
       sleep 1
     done
-    ipsec up l2tp-psk
+
+    # The L2TP data path only works once this transport SA is up -- without it
+    # xl2tpd's UDP/1701 packets go out in the clear and the server ignores
+    # them. Retry rather than give up: the SA is a hard prerequisite.
+    for i in $(seq 1 5); do
+      if ipsec up l2tp-psk; then
+        break
+      fi
+      echo "ipsec up failed (attempt $i), retrying..." >&2
+      sleep 5
+    done
+
+    if ! ipsec status | grep -q 'INSTALLED'; then
+      echo "ERROR: IPsec SA never established -- not dialing L2TP" >&2
+      exit 1
+    fi
 
     echo "--- starting xl2tpd ---"
     xl2tpd -D 2>&1 &
