@@ -47,6 +47,15 @@ spec:
             - secretRef:
                 name: netbird-l2tp-bridge-secret
           securityContext:
+            # privileged is required for /dev/ppp, not just for the caps. The
+            # hostPath mount below makes the device *node* visible, but the
+            # device cgroup still denies open() on it -- pppd got EPERM and
+            # reported the misleading "this system lacks PPP kernel support"
+            # (the host kernel has ppp_generic builtin and is fine). k8s has
+            # no per-device allowlist in the pod spec, so privileged is the
+            # only way to grant it. Caps kept explicit for documentation;
+            # privileged already implies them.
+            privileged: true
             capabilities:
               add: ["NET_ADMIN", "NET_RAW"]
           volumeMounts:
