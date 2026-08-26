@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#
+#tskey-auth-kvUMWTHmmC21CNTRL-6xjfqySFcNNRF3N9m8YYNNMHyT8MNJq6
 # Seals the Tailscale auth key into tailscale-secret.sealed.yaml.
 #
 # The key is read from a silent prompt and piped straight into kubeseal, so
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 NAMESPACE="tailscale-l2tp-bridge"
-SECRET_NAME="tailscale-l2tp-bridge-tailscale"
+SECRET_NAME="tailscale-l2tp-bridge-secret"
 CONTROLLER_NAME="sealed-secrets-controller"
 CONTROLLER_NS="sealed-secrets"
 OUT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tailscale-secret.sealed.yaml"
