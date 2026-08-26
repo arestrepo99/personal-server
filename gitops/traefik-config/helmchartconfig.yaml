@@ -13,8 +13,10 @@ spec:
         hostPort: 80
       websecure:
         hostPort: 443
-    # Don't spawn svclb: its extra NAT hop MASQUERADEs the source address,
-    # which is what was corrupting X-Forwarded-For. The hostPort above already
-    # does the forward, and it preserves the real client IP.
+    # ClusterIP so servicelb doesn't spawn an svclb DaemonSet: its extra NAT
+    # hop MASQUERADEs the source address, which is what was corrupting
+    # X-Forwarded-For. The hostPort above already does the forward and
+    # preserves the real client IP.
     service:
-      type: ClusterIP
+      spec:
+        type: ClusterIP
