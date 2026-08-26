@@ -5,17 +5,32 @@ metadata:
   namespace: kube-system
 spec:
   valuesContent: |-
-    logs:
-      access:
-        enabled: true
+    # hostNetwork so Traefik binds the node's interface directly. With
+    # hostPort, the inbound packet is DNATed to a 10.42.0.x pod address,
+    # which then matches flannel's POSTROUTING rule
+    #   ! -s 10.42.0.0/16 -d 10.42.0.0/16 -j MASQUERADE
+    # and the client IP is rewritten to 10.42.0.1 before Traefik sees it.
+    # hostNetwork keeps the pod CIDR out of the path so the rule can't match.
+    hostNetwork: true
     ports:
       web:
-        hostPort: 80
+        port: 80
       websecure:
-        hostPort: 443
+        port: 443
+    # Needed to bind privileged ports; chart defaults drop ALL capabilities.
+    securityContext:
+      capabilities:
+        drop: []
+        add: [NET_BIND_SERVICE]
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+    # ClusterIP so servicelb doesn't spawn an svclb DaemonSet (its NAT hop
+    # masquerades too). Chart wants service.spec.type, not service.type.
     service:
       spec:
         type: ClusterIP
+    # hostNetwork means one pod per node can hold 80/443, so the default
+    # RollingUpdate (maxUnavailable: 0) deadlocks on rollout.
     updateStrategy:
       rollingUpdate:
         maxUnavailable: 1
