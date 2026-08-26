@@ -38,8 +38,19 @@ spec:
             - -c
             - |
               set -e
-              apt-get update
-              apt-get install -y --no-install-recommends strongswan strongswan-starter xl2tpd ppp iproute2 iputils-ping procps iptables
+              # Retry: a transient mirror failure here exits 100 and takes the
+              # whole container down (observed). Since packages are fetched on
+              # every start, that turns any blip into a restart loop.
+              for i in 1 2 3; do
+                apt-get update \
+                  && apt-get install -y --no-install-recommends \
+                       strongswan strongswan-starter xl2tpd ppp iproute2 \
+                       iputils-ping procps iptables \
+                  && break
+                echo "apt attempt $i failed, retrying..." >&2
+                [ "$i" = 3 ] && exit 1
+                sleep 5
+              done
               exec bash /scripts/entrypoint.sh
           envFrom:
             - configMapRef:

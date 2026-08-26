@@ -62,6 +62,16 @@ data:
     chmod 600 /etc/ipsec.secrets
 
     mkdir -p /etc/xl2tpd
+    # NOTE: no comments inside this heredoc. xl2tpd's parser has no comment
+    # syntax for '#' -- it reports "line too long or no '=' in data" and then
+    # refuses to load the *entire* config, so xl2tpd starts but never dials.
+    # (strongswan's ipsec.conf and pppd's options file both accept '#', which
+    # is why only this file is affected.) Keep explanations out here.
+    #
+    # "max redials" is effectively unlimited below: this is an always-on
+    # bridge, and with a small budget xl2tpd gives up for good after a few
+    # failures while staying alive, so the pod sits idle forever with nothing
+    # to recover it. Any transient server-side condition must self-heal.
     cat > /etc/xl2tpd/xl2tpd.conf <<EOF
     [global]
     port = 1701
@@ -73,10 +83,6 @@ data:
     length bit = yes
     redial = yes
     redial timeout = 5
-    # Effectively unlimited. This is an always-on bridge: with a small budget
-    # xl2tpd gives up for good after a few failures and the pod then sits
-    # doing nothing forever, since xl2tpd stays alive and nothing re-dials.
-    # Any transient server-side condition has to be able to self-heal.
     max redials = 10000
     autodial = yes
     EOF
