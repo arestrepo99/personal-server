@@ -57,14 +57,29 @@ kubectl -n netbird-l2tp-bridge get pods
 kubectl -n netbird-l2tp-bridge logs deploy/netbird-l2tp-bridge -f
 ```
 
-Look for `ppp0 is up` in the logs. Then, from inside the pod:
+Look for `ppp0 is up` in the logs, followed by an `inet` address. Then, from
+inside the pod:
 
 ```bash
 kubectl -n netbird-l2tp-bridge exec -it deploy/netbird-l2tp-bridge -- bash
-ip addr show ppp0
-ip route            # default route should now be via ppp0
-curl -s ifconfig.me # should show the L2TP server's exit IP, not this host's
+ip addr show ppp0                    # should have an inet addr, e.g. 192.168.2.6
+ping -c3 -I ppp0 <peer from ip addr> # peer address shown by "ip addr show ppp0"
 ```
+
+An IPCP-assigned address on `ppp0` is also the proof that the L2TP
+username/password worked -- auth happens before addressing, so a wrong
+password never gets this far.
+
+Note the pod's **default route stays on `eth0`, not `ppp0`**. `pppd` is
+passed `defaultroute`, but that option won't override an already-present
+default route, so it's a no-op here. That's deliberate: sending everything
+through the tunnel would cut the pod off from the cluster and (later) from
+the NetBird control plane. Stage 2 routes only NetBird-peer traffic out
+`ppp0` via policy routing, rather than moving the default route.
+
+So don't expect `curl ifconfig.me` to show the L2TP server's exit IP --
+it will show this host's. Test the tunnel by pinging the peer over `ppp0`
+explicitly, as above.
 
 ## Known rough edge
 
