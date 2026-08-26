@@ -68,7 +68,13 @@ curl -s ifconfig.me # should show the L2TP server's exit IP, not this host's
 
 ## Known rough edge
 
-This pod needs `NET_ADMIN`/`NET_RAW` and a host `/dev/ppp` device mount --
-enough host-networking privilege that containerization buys little isolation
-here. That's inherent to running a PPP-based tunnel, not something to try to
+This pod runs `privileged: true`. `NET_ADMIN`/`NET_RAW` plus the host
+`/dev/ppp` mount are necessary but *not* sufficient: the mount makes the
+device node visible, while the device cgroup still denies `open()` on it, so
+pppd fails with `Sorry - this system lacks PPP kernel support` (misleading --
+the host kernel has `ppp_generic` builtin). Kubernetes has no per-device
+allowlist in the pod spec, so `privileged` is the only way to grant it.
+
+That's enough host privilege that containerization buys little isolation
+here. It's inherent to running a PPP-based tunnel, not something to try to
 harden away.
