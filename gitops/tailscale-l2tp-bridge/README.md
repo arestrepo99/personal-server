@@ -42,9 +42,31 @@ Two sealed Secrets, both namespace-scoped -- SealedSecrets are encrypted
 
 ### 1. L2TP password + IPsec PSK
 
-Server hostname and username aren't sensitive and live in plaintext in
-`env-configmap.yaml`. Only these two get sealed. The plaintext never touches
-disk -- it only exists in the pipe between the two commands:
+Already sealed in `secret.sealed.yaml`. Server hostname and username aren't
+sensitive and live in plaintext in `env-configmap.yaml`; only these two are
+encrypted.
+
+They were copied from the netbird bridge's live Secret rather than retyped --
+same credentials, and a SealedSecret is bound to one namespace+name so the
+existing file could not just be reused. To regenerate (e.g. after a password
+change), this re-encrypts for the new namespace without the plaintext ever
+reaching the terminal, a file, or your shell history:
+
+```bash
+kubectl -n netbird-l2tp-bridge get secret netbird-l2tp-bridge-secret -o json \
+| python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print(json.dumps({'apiVersion':'v1','kind':'Secret','type':'Opaque',
+  'metadata':{'name':'tailscale-l2tp-bridge-secret','namespace':'tailscale-l2tp-bridge'},
+  'data':d['data']}))" \
+| kubeseal --format yaml \
+    --controller-name sealed-secrets-controller \
+    --controller-namespace sealed-secrets \
+> secret.sealed.yaml
+```
+
+If the netbird namespace is gone, seal from scratch instead:
 
 ```bash
 kubectl create secret generic tailscale-l2tp-bridge-secret \
