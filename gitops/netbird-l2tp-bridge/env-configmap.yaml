@@ -9,3 +9,15 @@ metadata:
 data:
   L2TP_SERVER: "providencia.arec.me"
   L2TP_USER: "server"
+
+  # Subnets on the far side of the tunnel, routed out ppp0. Space-separated.
+  # 192.168.1.0/24 is the L2TP server's own LAN (the server answers on
+  # 192.168.1.15); 192.168.20.0/24 is where the DNS server pppd hands us
+  # (192.168.20.1) lives. Advertise the matching ranges in the NetBird
+  # dashboard -- this only builds the routes, it doesn't advertise them.
+  REMOTE_SUBNETS: "192.168.1.0/24 192.168.20.0/24"
+
+  # NetBird sidecar. Management is the self-hosted server in the netbird
+  # namespace (gitops/netbird), reached over its public ingress.
+  NB_MANAGEMENT_URL: "https://netbird.arec.me"
+  NB_HOSTNAME: "netbird-l2tp-bridge"

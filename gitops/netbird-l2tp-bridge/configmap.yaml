@@ -96,6 +96,54 @@ data:
     password ${L2TP_PASSWORD}
     EOF
 
+    # Routing for the NetBird sidecar. This runs from pppd's ip-up hook rather
+    # than inline, because ppp0 only exists (and only has an address) once
+    # IPCP completes -- and it's recreated on every redial, which wipes these.
+    # The hook re-applies them each time the link comes back.
+    #
+    # The sidecar shares this pod's network namespace, so wt0 and ppp0 sit in
+    # the same netns and this one script covers both containers' routing.
+    mkdir -p /etc/ppp/ip-up.d
+    cat > /etc/ppp/ip-up.d/50-netbird-routes <<'HOOK'
+    #!/bin/bash
+    # Args from pppd: $1=iface $2=tty $3=speed $4=local-ip $5=remote-ip
+    set -u
+    IFACE="$1"
+    [ "$IFACE" = "ppp0" ] || exit 0
+
+    # pppd runs ip-up with a sanitized environment, so don't rely on
+    # inheriting REMOTE_SUBNETS from the container env -- read it from the
+    # file the entrypoint wrote.
+    [ -f /etc/ppp/netbird-routes.env ] && . /etc/ppp/netbird-routes.env
+
+    echo "ip-up: applying netbird bridge routing on $IFACE" >&2
+
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null
+
+    # Specific remote subnets: plain routes in the main table, so anything
+    # NetBird forwards to them goes out the tunnel.
+    for net in ${REMOTE_SUBNETS:-}; do
+      ip route replace "$net" dev "$IFACE" || true
+    done
+
+    # Exit-node path. The pod's default route deliberately stays on eth0 (see
+    # README) so the pod keeps cluster and NetBird control-plane access. Only
+    # traffic *arriving from* the NetBird interface is policy-routed out the
+    # tunnel, via its own table.
+    ip route replace default dev "$IFACE" table 100 || true
+    ip rule del iif wt0 lookup 100 2>/dev/null || true
+    ip rule add iif wt0 lookup 100 || true
+
+    # NAT out the tunnel: the far side only knows our ppp0 address, so
+    # forwarded peer traffic has to be masqueraded to it.
+    iptables -t nat -C POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null \
+      || iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
+
+    echo "ip-up: routing applied" >&2
+    HOOK
+    chmod 755 /etc/ppp/ip-up.d/50-netbird-routes
+    printf 'REMOTE_SUBNETS="%s"\n' "${REMOTE_SUBNETS:-}" > /etc/ppp/netbird-routes.env
+
     mkdir -p /run/xl2tpd /var/run/xl2tpd
     touch /var/run/xl2tpd.pid
 

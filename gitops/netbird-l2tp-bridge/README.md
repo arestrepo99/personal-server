@@ -50,6 +50,57 @@ in the real values yourself and only commit/send back the sealed output.
    the `netbird-l2tp-bridge` namespace, and the Deployment consumes both via
    `envFrom`.
 
+## Stage 2: the NetBird sidecar
+
+The `netbird` container runs in the *same pod*, so it shares the network
+namespace and sees `ppp0` directly -- that shared netns is why it's a
+sidecar and not its own pod.
+
+Routing is installed by pppd's `ip-up` hook (written by `entrypoint.sh`),
+so it's re-applied on every redial rather than once at startup:
+
+- `REMOTE_SUBNETS` (in `env-configmap.yaml`) get plain routes out `ppp0`.
+- Exit-node traffic is **policy-routed**: `ip rule add iif wt0 lookup 100`
+  with `default dev ppp0` in table 100. The pod's own default route stays
+  on `eth0` so it keeps cluster and NetBird control-plane access -- only
+  traffic arriving from NetBird goes out the tunnel.
+- `MASQUERADE` on `ppp0`, since the far side only knows our `ppp0` address.
+
+### Sealing the setup key
+
+Create a **reusable** setup key in the dashboard (`https://netbird.arec.me`)
+-- reusable because the sidecar's state is an `emptyDir` and re-registers on
+restart. Then seal it (the plaintext key never touches disk):
+
+```bash
+kubectl create secret generic netbird-l2tp-bridge-netbird \
+  --namespace netbird-l2tp-bridge \
+  --from-literal=NB_SETUP_KEY='<setup key from the dashboard>' \
+  --dry-run=client -o yaml \
+| kubeseal --format yaml \
+    --controller-name sealed-secrets-controller \
+    --controller-namespace sealed-secrets \
+> netbird-secret.sealed.yaml
+```
+
+Commit `netbird-secret.sealed.yaml`. Until it exists the `netbird`
+container crashloops while the L2TP tunnel keeps working -- the secretRef
+is marked `optional` precisely so a missing key can't take the bridge down.
+
+### Advertising the routes
+
+The manifests build the routes; they do **not** advertise them. In the
+dashboard, under Network Routes, add two routes with this peer as the
+routing peer:
+
+| Network range | Purpose |
+| --- | --- |
+| `192.168.1.0/24`, `192.168.20.0/24` | remote LANs behind the L2TP server |
+| `0.0.0.0/0` | exit node -- peers' internet egress via the tunnel |
+
+Keeping them separate lets you enable each per peer group independently.
+Distribution groups are set in the dashboard, not in git.
+
 ## Verifying the tunnel after deploy
 
 ```bash

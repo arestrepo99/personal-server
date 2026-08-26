@@ -39,7 +39,7 @@ spec:
             - |
               set -e
               apt-get update
-              apt-get install -y --no-install-recommends strongswan strongswan-starter xl2tpd ppp iproute2 iputils-ping procps
+              apt-get install -y --no-install-recommends strongswan strongswan-starter xl2tpd ppp iproute2 iputils-ping procps iptables
               exec bash /scripts/entrypoint.sh
           envFrom:
             - configMapRef:
@@ -63,6 +63,44 @@ spec:
               mountPath: /scripts
             - name: dev-ppp
               mountPath: /dev/ppp
+
+        # Stage 2: the NetBird peer. It shares this pod's network namespace,
+        # so it sees ppp0 directly and the routing the l2tp container's
+        # ip-up hook installs applies to its traffic with no extra plumbing.
+        # That shared netns is the whole reason this is a sidecar and not its
+        # own pod.
+        #
+        # privileged for the same reason as the l2tp container: it needs
+        # /dev/net/tun to bring up wt0, and a hostPath mount alone only
+        # exposes the device node -- the device cgroup still denies open().
+        - name: netbird
+          image: netbirdio/netbird:latest
+          env:
+            - name: NB_FOREGROUND_MODE
+              value: "true"
+            # State lives in the container; the peer re-registers with the
+            # setup key on restart. Keep the key reusable (see README).
+            - name: NB_CONFIG
+              value: /var/lib/netbird/config.json
+          envFrom:
+            - configMapRef:
+                name: netbird-l2tp-bridge-env
+            # optional: a missing secretRef blocks the whole *pod* from
+            # starting, which would take the working L2TP tunnel down with
+            # it. This way the bridge keeps running and only this container
+            # crashloops until the setup key is sealed (see README).
+            - secretRef:
+                name: netbird-l2tp-bridge-netbird
+                optional: true
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["NET_ADMIN", "NET_RAW", "SYS_ADMIN"]
+          volumeMounts:
+            - name: dev-net-tun
+              mountPath: /dev/net/tun
+            - name: netbird-state
+              mountPath: /var/lib/netbird
       volumes:
         - name: scripts
           configMap:
@@ -71,3 +109,11 @@ spec:
           hostPath:
             path: /dev/ppp
             type: CharDevice
+        - name: dev-net-tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+        # emptyDir, not a PVC: NetBird state is re-derivable by re-running the
+        # setup key, and a PVC would pin this pod to one node for no gain.
+        - name: netbird-state
+          emptyDir: {}
