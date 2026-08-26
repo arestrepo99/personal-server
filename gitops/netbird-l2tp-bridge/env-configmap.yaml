@@ -21,3 +21,9 @@ data:
   # namespace (gitops/netbird), reached over its public ingress.
   NB_MANAGEMENT_URL: "https://netbird.arec.me"
   NB_HOSTNAME: "netbird-l2tp-bridge"
+
+  # Source prefix used to policy-route NetBird traffic out ppp0. NetBird
+  # allocates peer addresses from the CGNAT range by default. Matching on
+  # source rather than "iif wt0" keeps the rule valid even when ppp0 comes
+  # up before the sidecar has created wt0.
+  NETBIRD_CIDR: "100.64.0.0/10"

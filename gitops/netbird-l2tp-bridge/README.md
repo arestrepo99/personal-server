@@ -86,6 +86,18 @@ Only the encrypted `netbird-secret.sealed.yaml` is written, and only the
 in-cluster controller can decrypt it -- so it's safe to commit. The script
 refuses to write anything that isn't a real `SealedSecret`.
 
+If the sidecar logs:
+
+```
+couldn't add peer: setup key is invalid
+```
+
+the key was **one-off and already consumed**. It registers the peer once,
+then every later restart fails, because the sidecar's `emptyDir` state is
+wiped and it re-registers from scratch. Create a reusable key and re-run
+the script. (Seen in practice -- the peer came up once, then `wt0`
+disappeared after the next restart.)
+
 Commit `netbird-secret.sealed.yaml`. Until it exists the `netbird`
 container crashloops while the L2TP tunnel keeps working -- the secretRef
 is marked `optional` precisely so a missing key can't take the bridge down.

@@ -125,6 +125,7 @@ data:
     # inheriting REMOTE_SUBNETS from the container env -- read it from the
     # file the entrypoint wrote.
     [ -f /etc/ppp/netbird-routes.env ] && . /etc/ppp/netbird-routes.env
+    : "${NETBIRD_CIDR:=100.64.0.0/10}"
 
     echo "ip-up: applying netbird bridge routing on $IFACE" >&2
 
@@ -138,11 +139,20 @@ data:
 
     # Exit-node path. The pod's default route deliberately stays on eth0 (see
     # README) so the pod keeps cluster and NetBird control-plane access. Only
-    # traffic *arriving from* the NetBird interface is policy-routed out the
-    # tunnel, via its own table.
+    # NetBird-originated traffic is policy-routed out the tunnel.
+    #
+    # Match on source prefix, NOT "iif wt0". An iif rule resolves the ifindex
+    # when it's added, and this hook runs when ppp0 comes up -- which can be
+    # before the netbird sidecar has created wt0. The rule then shows as
+    # "iif wt0 [detached]" and never re-attaches when wt0 appears, so peer
+    # traffic silently falls through to the main table and egresses via eth0
+    # instead of the tunnel. A silent leak is worse than a visible failure.
+    # NetBird hands out addresses from the CGNAT range, so the source prefix
+    # is stable and needs no interface to exist.
     ip route replace default dev "$IFACE" table 100 || true
     ip rule del iif wt0 lookup 100 2>/dev/null || true
-    ip rule add iif wt0 lookup 100 || true
+    ip rule del from "${NETBIRD_CIDR}" lookup 100 2>/dev/null || true
+    ip rule add from "${NETBIRD_CIDR}" lookup 100 || true
 
     # NAT out the tunnel: the far side only knows our ppp0 address, so
     # forwarded peer traffic has to be masqueraded to it.
@@ -152,7 +162,10 @@ data:
     echo "ip-up: routing applied" >&2
     HOOK
     chmod 755 /etc/ppp/ip-up.d/50-netbird-routes
-    printf 'REMOTE_SUBNETS="%s"\n' "${REMOTE_SUBNETS:-}" > /etc/ppp/netbird-routes.env
+    {
+      printf 'REMOTE_SUBNETS="%s"\n' "${REMOTE_SUBNETS:-}"
+      printf 'NETBIRD_CIDR="%s"\n' "${NETBIRD_CIDR:-100.64.0.0/10}"
+    } > /etc/ppp/netbird-routes.env
 
     mkdir -p /run/xl2tpd /var/run/xl2tpd
     touch /var/run/xl2tpd.pid
