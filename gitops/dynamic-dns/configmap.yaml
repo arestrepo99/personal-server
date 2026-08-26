@@ -26,11 +26,6 @@ data:
           return Response(status_code=400)
         if not params['password'].startswith('6437'):
           return Response(status_code=400, content=f"Invalid request from {real_ip}")
-
-        # Drop any ip param the caller sent (it's usually a LAN address, not
-        # our public IP). Omitting it lets Namecheap auto-detect the public
-        # IP from the outbound connection this relay makes below, which
-        # actually egresses through our real WAN uplink.
         params.pop("ip", None)
 
         print("\n" + "="*60)
