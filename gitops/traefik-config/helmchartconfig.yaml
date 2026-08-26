@@ -25,4 +25,4 @@ spec:
         publishedService:
           enabled: false
         ingressEndpoint:
-          ip: "cloudarm.arec.me"
+          hostname: "cloudarm.arec.me"
