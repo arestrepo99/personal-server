@@ -150,15 +150,24 @@ data:
     # instead of the tunnel. A silent leak is worse than a visible failure.
     # Tailscale hands out addresses from the CGNAT range, so the source prefix
     # is stable and needs no interface to exist.
+    # The rule's priority MUST sort after tailscaled's own rules (5210-5270).
+    # Left unspecified, iproute2 picks the first free slot below the lowest
+    # existing rule -- here 219, which lands *ahead* of "5270: from all lookup
+    # 52". Table 52 is tailscaled's per-peer routing table, so at 219 every
+    # packet from a tailnet source headed for another peer (or for MagicDNS
+    # at 100.100.100.100) matched our rule first and got thrown at
+    # "default dev ppp0" -- blackholed down the tunnel instead of going out
+    # tailscale0. Exit-node traffic still worked, which is what made it easy
+    # to miss.
     #
-    # tailscaled installs its own rules at priorities 5210-5270 (table 52),
-    # which sort ahead of this one (~32765). That's fine: table 52 only holds
-    # routes for tailnet destinations, so traffic bound for the internet or
-    # for REMOTE_SUBNETS falls through to the rule below.
+    # At 5300 the ordering is right: table 52 gets first refusal, and only
+    # traffic it has no route for -- i.e. internet-bound exit-node traffic --
+    # falls through to table 100 and the tunnel.
     ip route replace default dev "$IFACE" table 100 || true
     ip rule del iif tailscale0 lookup 100 2>/dev/null || true
     ip rule del from "${TAILSCALE_CIDR}" lookup 100 2>/dev/null || true
-    ip rule add from "${TAILSCALE_CIDR}" lookup 100 || true
+    ip rule del pref 5300 2>/dev/null || true
+    ip rule add from "${TAILSCALE_CIDR}" lookup 100 pref 5300 || true
 
     # NAT out the tunnel: the far side only knows our ppp0 address, so
     # forwarded peer traffic has to be masqueraded to it.

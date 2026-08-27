@@ -150,10 +150,27 @@ Identical to the NetBird bridge, and for the same reasons:
 All of it lives in pppd's `ip-up` hook, so it is re-applied on every redial
 rather than once at startup.
 
-tailscaled installs its own `ip rule`s at priorities 5210-5270 (table 52),
-which sort *ahead* of ours (~32765). That's harmless: table 52 holds only
-tailnet destinations, so internet- and LAN-bound traffic falls through to
-our rule.
+The policy rule is added with an **explicit `pref 5300`**, and that number
+matters. tailscaled installs its own rules at priorities 5210-5270, the last
+being `5270: from all lookup 52` -- table 52 is its per-peer routing table.
+Left unspecified, `ip rule add` picks the first free slot below the lowest
+existing rule, which on this node was **219** -- ahead of 5270. Every packet
+from a tailnet source headed for another peer (or for MagicDNS at
+100.100.100.100) then matched our rule first and was thrown at
+`default dev ppp0`, i.e. blackholed down the tunnel. Exit-node traffic kept
+working throughout, which is what makes this easy to miss.
+
+At 5300 the ordering is right -- table 52 gets first refusal, and only
+traffic it has no route for (internet-bound exit-node traffic) falls through
+to table 100. Verify with `ip route get`:
+
+```bash
+ip route get 100.100.100.100 from <this node's tailscale IP>  # dev tailscale0, table 52
+ip route get 8.8.8.8         from <this node's tailscale IP>  # dev ppp0,      table 100
+```
+
+Note `gitops/netbird-l2tp-bridge` has the same unpinned-priority rule and so
+carries the same latent bug, should it ever be brought back.
 
 Two Tailscale-specific env settings worth knowing:
 
