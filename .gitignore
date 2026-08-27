@@ -28,3 +28,10 @@ terraform/*.auto.tfvars
 **/secrets/*.yaml
 !**/secrets/*.sealed.yaml
 gitops/netbird/config.yaml
+
+# Nebula CA private key and per-client key material. The CA key is the root of
+# trust for the whole mesh and lives only on the operator's machine; the
+# clients/ dirs hold node private keys in the clear until they're copied to
+# the node. Only certs.sealed.yaml (encrypted) belongs in git.
+gitops/nebula-lighthouse/ca/
+gitops/nebula-lighthouse/clients/

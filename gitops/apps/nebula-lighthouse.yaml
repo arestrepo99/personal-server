@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nebula-lighthouse
+  namespace: argocd
+  annotations:
+    # Wave 1: needs the sealed-secrets controller (wave 0) ready to unseal the
+    # cert Secret the pod mounts. No cert-manager/Ingress dependency (it's a
+    # raw UDP service on hostNetwork), so it doesn't need wave 2.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:arestrepo99/personal-server.git
+    targetRevision: main
+    path: gitops/nebula-lighthouse
+    directory:
+      recurse: true
+      # The directory also holds shell helpers and a README; without this
+      # ArgoCD would still only pick up .yaml, but certs.sealed.yaml is the
+      # only file here that must never be mistaken for a plain Secret --
+      # keeping the glob explicit documents what is actually applied.
+      include: "*.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: nebula-lighthouse
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

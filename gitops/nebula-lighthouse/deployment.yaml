@@ -1,0 +1,84 @@
+# The lighthouse must be reachable from the internet at a *stable* UDP
+# address, so it runs with hostNetwork: true and binds 4242 directly on the
+# node -- 157.151.171.157:4242. A NodePort would work too, but hostNetwork
+# keeps the port number identical inside and out, which matters because every
+# client hardcodes it in its static_host_map.
+#
+# Consequences of hostNetwork:
+#   - strategy: Recreate. Two pods can't bind the same host port, so a
+#     RollingUpdate would deadlock with the new pod stuck in CrashLoopBackOff.
+#   - dnsPolicy: ClusterFirstWithHostNet, or the pod would use the node's
+#     resolv.conf and lose cluster DNS.
+#
+# Before this is reachable, UDP 4242 has to be open in the OCI security list
+# for the instance's subnet *and* in the instance's own iptables (Oracle's
+# Ubuntu images ship a default-DROP INPUT chain) -- see README.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nebula-lighthouse
+  namespace: nebula-lighthouse
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nebula-lighthouse
+  template:
+    metadata:
+      labels:
+        app: nebula-lighthouse
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: nebula
+          # Upstream image (Slack's nebulaoss org), multi-arch -- arm64
+          # published, which this node needs.
+          image: nebulaoss/nebula:latest
+          args: ["-config", "/etc/nebula/config.yml"]
+          ports:
+            - name: nebula
+              containerPort: 4242
+              hostPort: 4242
+              protocol: UDP
+          securityContext:
+            # Same lesson as the l2tp bridges: mounting /dev/net/tun via
+            # hostPath makes the device *node* visible, but the device cgroup
+            # still denies open(), so nebula fails to create nebula1. k8s has
+            # no per-device allowlist in the pod spec -- privileged is the
+            # only way to grant it. NET_ADMIN is kept explicit for
+            # documentation; privileged already implies it.
+            privileged: true
+            capabilities:
+              add: ["NET_ADMIN"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nebula
+            - name: certs
+              mountPath: /nebula-certs
+              readOnly: true
+            - name: dev-net-tun
+              mountPath: /dev/net/tun
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: config
+          configMap:
+            name: nebula-lighthouse
+        - name: certs
+          secret:
+            # Unsealed from certs.sealed.yaml by the sealed-secrets
+            # controller. Not optional: without the key there is nothing to
+            # run, and a pod that starts anyway would just hide the problem.
+            secretName: nebula-lighthouse-certs
+            defaultMode: 0400
+        - name: dev-net-tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice

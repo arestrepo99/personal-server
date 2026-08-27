@@ -1,0 +1,94 @@
+# Nebula lighthouse config. A lighthouse is just a nebula node with
+# am_lighthouse: true -- it holds the map of "which overlay IP is currently at
+# which real IP:port" and hands it out so peers can hole-punch directly to
+# each other. It carries no traffic itself unless it's also a relay (it is,
+# see below).
+#
+# Config keys and the overlay addressing here have to match what
+# seal-nebula-certs.sh signs into the certificates:
+#   overlay network : 10.10.0.0/24   (nebula-cert -ip 10.10.0.x/24)
+#   this lighthouse : 10.10.0.1
+# Nebula enforces the cert's IP -- changing the CIDR means re-signing every
+# node, so pick it once. 10.10.0.0/24 is deliberately clear of the LANs the
+# L2TP bridges advertise (192.168.1.0/24, 192.168.20.0/24) and of the k3s
+# pod/service ranges.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nebula-lighthouse
+  namespace: nebula-lighthouse
+data:
+  config.yml: |
+    pki:
+      # Mounted from the sealed Secret (see seal-nebula-certs.sh). The CA
+      # *key* is never in the cluster -- only the public ca.crt, plus this
+      # host's own cert/key.
+      ca: /nebula-certs/ca.crt
+      cert: /nebula-certs/host.crt
+      key: /nebula-certs/host.key
+
+    # A lighthouse has no lighthouses of its own to ask, so this stays empty.
+    # Client nodes put "10.10.0.1: ["157.151.171.157:4242"]" here instead.
+    static_host_map: {}
+
+    lighthouse:
+      am_lighthouse: true
+      # Only meaningful on non-lighthouse nodes; left explicit so a copy of
+      # this file used as a client template is obvious.
+      interval: 60
+      hosts: []
+
+    listen:
+      host: 0.0.0.0
+      port: 4242
+
+    punchy:
+      # Keep a NAT mapping alive outward so peers behind NAT stay reachable,
+      # and answer punch requests on behalf of hosts we know about.
+      punch: true
+      respond: true
+
+    relay:
+      # This node relays traffic between two peers that fail to hole-punch
+      # (symmetric NAT on both ends). Costs bandwidth on this box, but it's
+      # the difference between "usually works" and "always works". Clients
+      # must list this node under their own `relay.relays` to use it.
+      am_relay: true
+      use_relays: true
+      relays: []
+
+    tun:
+      disabled: false
+      dev: nebula1
+      drop_local_broadcast: false
+      drop_multicast: false
+      tx_queue: 500
+      mtu: 1300
+      routes: []
+      unsafe_routes: []
+
+    logging:
+      level: info
+      format: text
+
+    firewall:
+      conntrack:
+        tcp_timeout: 12m
+        udp_timeout: 3m
+        default_timeout: 10m
+
+      # Outbound is wide open; inbound is not. The lighthouse itself is not a
+      # service host -- peers only need to reach its *nebula control plane*,
+      # which is UDP 4242 on the underlay and not subject to these rules.
+      # These rules govern traffic on the overlay interface, so icmp-only is
+      # enough to ping-test the tunnel without exposing this box's ports to
+      # every node in the mesh.
+      outbound:
+        - port: any
+          proto: any
+          host: any
+
+      inbound:
+        - port: any
+          proto: icmp
+          host: any
